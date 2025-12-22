@@ -1,0 +1,6 @@
+streamlit==1.39.0
+pdfplumber==0.11.4
+pytesseract==0.3.13
+Pillow==10.4.0
+reportlab==4.2.2
+stripe==10.12.0

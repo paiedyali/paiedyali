@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: paiedyali-streamlit
+    env: docker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: STRIPE_SECRET_KEY
+        sync: false
+      - key: STRIPE_PAYMENT_LINK
+        sync: false
+      - key: ALLOW_NO_PAYMENT
+        value: "false"
