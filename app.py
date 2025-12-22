@@ -51,9 +51,9 @@ st.markdown(
 DEBUG = st.checkbox("Mode debug", value=False)
 
 # ------------------------------------------------------------
-# Paiement (Stripe) — mode SaaS 4,95 €
+# Paiement (Stripe) — mode SaaS 7,50 €
 # ------------------------------------------------------------
-PRICE_EUR = 4.95
+PRICE_EUR = 7.50
 PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "").strip()  # ex: https://buy.stripe.com/...
 ALLOW_NO_PAYMENT = os.getenv("ALLOW_NO_PAYMENT", "false").lower() == "true"
 
@@ -87,10 +87,10 @@ def is_payment_ok() -> tuple[bool, str]:
 
 paid_ok, paid_reason = is_payment_ok()
 if not paid_ok:
-    st.markdown("## Vérification — 4,95 €")
-    st.write("Pour analyser votre bulletin, une vérification coûte **4,95 €** (paiement unique).")
+    st.markdown("## Vérification — 7,50 €")
+    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
     if PAYMENT_LINK:
-        st.link_button("Payer 4,95 €", PAYMENT_LINK, type="primary")
+        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
         st.caption("Après paiement, vous serez redirigé ici automatiquement.")
     else:
         st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
