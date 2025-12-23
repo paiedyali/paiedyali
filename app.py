@@ -26,14 +26,30 @@ from reportlab.pdfgen import canvas
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
+import streamlit as st
+
+st.set_page_config(
+    page_title="Lecteur bulletin (Quadra + SILAE)",
+    layout="wide"
+)
+
+# =========================
+# Initialisation DB (1 fois)
+# =========================
 @st.cache_resource
 def init_db_once():
-    
+    try:
+        db_init()  # ta fonction existante
+    except Exception as e:
+        # Ne bloque jamais l'app au démarrage
+        print("DB init failed:", repr(e), flush=True)
     return True
 
 init_db_once()
 
+# =========================
+# UI – Page d'accueil
+# =========================
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 
