@@ -123,17 +123,68 @@ if not paid_ok:
 def _get_session_id_for_credit():
     return _get_query_param("session_id") or _get_query_param("checkout_session_id")
 
-if "analysis_credit_used_for" not in st.session_state:
-    # stocke le session_id (Stripe) pour lequel le crédit a été consommé
-    st.session_state.analysis_credit_used_for = None
-
-# si l'utilisateur revient avec un NOUVEAU session_id payé, on ré-autorise 1 analyse
-_sid = _get_session_id_for_credit()
-if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.session_state.analysis_credit_used_for != _sid):
-    # nouvelle session de paiement => nouveau crédit
-    st.session_state.analysis_credit_used_for = None
 
 # ------------------------------------------------------------
+# Crédit d'analyse : 1 paiement = 1 analyse (anti-refresh)
+#
+# Sur Render Free : pas de disque persistant → on stocke dans /tmp (survit aux refresh,
+# mais pas aux redémarrages/redeploy). Quand tu passeras en Starter avec disque (/data),
+# ce stockage deviendra persistant automatiquement.
+# ------------------------------------------------------------
+import sqlite3
+from contextlib import closing
+
+def _db_path() -> str:
+    # si un disque persistant Render est présent, on l'utilise
+    if os.path.isdir("/data"):
+        return os.path.join("/data", "quadra_credits.db")
+    return os.getenv("DB_PATH", "/tmp/quadra_credits.db")
+
+def _db():
+    con = sqlite3.connect(_db_path(), check_same_thread=False)
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS consumed_sessions (
+            session_id TEXT PRIMARY KEY,
+            consumed_at TEXT NOT NULL
+        )
+        """
+    )
+    con.commit()
+    return con
+
+def credit_is_consumed(session_id: str) -> bool:
+    if not session_id:
+        return False
+    con = _db()
+    with closing(con.cursor()) as cur:
+        cur.execute("SELECT 1 FROM consumed_sessions WHERE session_id=?", (session_id,))
+        return cur.fetchone() is not None
+
+def credit_consume(session_id: str) -> bool:
+    """Retourne True si on a consommé le crédit, False si déjà consommé."""
+    if not session_id:
+        return False
+    con = _db()
+    try:
+        con.execute(
+            "INSERT INTO consumed_sessions(session_id, consumed_at) VALUES(?, datetime('now'))",
+            (session_id,),
+        )
+        con.commit()
+        return True
+    except sqlite3.IntegrityError:
+        return False
+
+
+# Conserve un petit état côté session pour l'UI (non-sécurité).
+if "analysis_credit_used_for" not in st.session_state:
+    st.session_state.analysis_credit_used_for = None
+
+_sid = _get_session_id_for_credit()
+# si l'utilisateur revient avec un nouveau session_id payé, on ré-autorise l'UI
+if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.session_state.analysis_credit_used_for != _sid):
+    st.session_state.analysis_credit_used_for = None
 # Options d'analyse (après paiement)
 # ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
@@ -1095,6 +1146,120 @@ def extract_cp_from_image_silae(page_img):
 # ------------------------------------------------------------
 # Commentaires
 # ------------------------------------------------------------
+
+
+def extract_cp_from_text_any(text: str):
+    """Essaie d'extraire les congés payés (solde N-1 / N) depuis un texte (OCR ou PDF).
+    Retourne un dict compatible avec extract_cp_from_image_silae()."""
+    text = text or ""
+    lines = [l.strip() for l in text.splitlines() if l.strip()]
+    # Cherche une ligne contenant 'Solde' (souvent la ligne clé)
+    solde_idx = None
+    for i, l in enumerate(lines):
+        if "solde" in l.lower():
+            solde_idx = i
+            break
+
+    if solde_idx is None:
+        return {"cp_n1": None, "cp_n": None, "cp_total": None, "cp_method": "text_no_solde", "cp_solde_line": None}
+
+    # Regroupe 1-2 lignes autour pour capter les chiffres
+    chunk = " ".join(lines[max(0, solde_idx - 1): min(len(lines), solde_idx + 2)])
+    vals = [v for v in extract_amounts_money(chunk) if 0 <= v <= 60]  # CP en jours/heures, rarement >60
+    cp_n1 = None
+    cp_n = None
+    if len(vals) >= 2:
+        cp_n1, cp_n = vals[0], vals[1]
+        method = "text_solde_two_vals"
+    elif len(vals) == 1:
+        cp_n = vals[0]
+        method = "text_solde_one_val"
+    else:
+        method = "text_solde_no_numbers"
+
+    cp_total = round((cp_n1 or 0.0) + (cp_n or 0.0), 2) if (cp_n1 is not None or cp_n is not None) else None
+    return {"cp_n1": cp_n1, "cp_n": cp_n, "cp_total": cp_total, "cp_method": method, "cp_solde_line": chunk[:200]}
+
+
+def _choose_silae_page_index(page_images, page_texts):
+    """Le bulletin SILAE peut faire 1 ou 2 pages.
+    On essaie d'identifier la page qui contient le tableau avec 'Coût global'."""
+    for i, t in enumerate(page_texts or []):
+        tl = (t or "").lower()
+        if "coût global" in tl or "cout global" in tl:
+            return i
+
+    if not page_images:
+        return 0
+
+    for i, im in enumerate(page_images):
+        W, H = im.width, im.height
+        band = im.crop((0, int(H * 0.70), W, H))
+        try:
+            txt = pytesseract.image_to_string(band, lang="fra", config="--psm 6")
+        except Exception:
+            txt = ""
+        tl = (txt or "").lower()
+        if "coût global" in tl or "cout global" in tl:
+            return i
+
+    return 0
+
+
+def extract_silae_cost_and_cp(page_img, page_text: str | None = None):
+    """Extraction optimisée SILAE (plus rapide que 2 OCR séparés).
+    - tentative via texte (si présent)
+    - OCR bande basse pour coût global + CP
+    - fallback vers extract_cout_global_from_image / extract_cp_from_image_silae si besoin
+    """
+    debug = {}
+
+    # 1) tentative via texte
+    if page_text:
+        tl = page_text.lower()
+        if ("coût global" in tl) or ("cout global" in tl):
+            for line in (page_text.splitlines() or []):
+                ll = line.lower()
+                if ("coût global" in ll) or ("cout global" in ll):
+                    vals = [v for v in extract_amounts_money(line) if 0 < v < 50000]
+                    if vals:
+                        cout = vals[-1]
+                        cp = extract_cp_from_text_any(page_text)
+                        debug["mode"] = "text"
+                        return cout, f"text: {line[:200]}", cp, debug
+
+    # 2) OCR bande basse
+    W, H = page_img.width, page_img.height
+    bottom = page_img.crop((0, int(H * 0.62), W, H))
+    ocr_text = norm_spaces(pytesseract.image_to_string(bottom, lang="fra", config="--psm 6"))
+    debug["bottom_ocr_head"] = ocr_text[:220]
+
+    cout = None
+    cout_line = None
+    for line in ocr_text.splitlines():
+        ll = line.lower()
+        if ("coût global" in ll) or ("cout global" in ll):
+            vals = [v for v in extract_amounts_money(line) if 0 < v < 50000]
+            if vals:
+                cout = vals[-1]
+                cout_line = line[:200]
+                break
+
+    cp = extract_cp_from_text_any(ocr_text)
+
+    # fallback CP petite zone (si pas trouvé)
+    if cp.get("cp_total") is None:
+        cp = extract_cp_from_image_silae(page_img)
+        debug["cp_fallback"] = True
+
+    # fallback coût global précis
+    if cout is None:
+        cout, cout_line = extract_cout_global_from_image(page_img)
+        debug["cout_fallback"] = True
+
+    return cout, (cout_line or "bottom_ocr"), cp, debug
+
+
 def build_comments(brut, charges_sal, csg_nd, pas, charges_pat, acompte):
     out = []
 
@@ -1359,16 +1524,22 @@ if uploaded is not None:
 
         _sid = _get_session_id_for_credit()
 
-        if st.session_state.analysis_credit_used_for == _sid:
-
-            st.error(
-    "🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n"
-    "➡️ Pour analyser un autre bulletin, repasse par le paiement."
-)
-
-
+        if not _sid:
+            st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
             st.stop()
 
+        # Sécurité : on vérifie / consomme côté serveur (SQLite). Empêche le bypass au refresh.
+        if credit_is_consumed(_sid):
+            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
+            st.stop()
+
+        # On consomme le crédit AVANT de lancer le travail lourd.
+        if not credit_consume(_sid):
+            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
+            st.stop()
+
+        # UI only
+        st.session_state.analysis_credit_used_for = _sid
 
         import time
 
@@ -1379,9 +1550,7 @@ if uploaded is not None:
         status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
 
 
-        # On consomme le crédit dès maintenant (protège contre refresh/re-run)
-
-        st.session_state.analysis_credit_used_for = _sid
+        # Crédit consommé ✅
         # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
         file_obj = io.BytesIO(uploaded.getvalue())
         text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
@@ -1480,19 +1649,18 @@ if uploaded is not None:
 
             if page_images:
 
-                status.write("SILAE : OCR 'Coût global' (rapide)…")
+                idx_page = _choose_silae_page_index(page_images, page_texts)
+                page_img = page_images[idx_page]
+                page_txt = page_texts[idx_page] if page_texts else None
 
-                cout_total, cout_total_line = extract_cout_global_fast(page_images[0])
+                status.write(f"SILAE : page analysée = {idx_page + 1}/{len(page_images)}…")
+                status.write("SILAE : extraction coût global + congés (optimisée)…")
 
-                if cout_total is None:
+                cout_total, cout_total_line, cp, silae_dbg = extract_silae_cost_and_cp(page_img, page_text=page_txt)
 
-                    status.write("SILAE : fallback OCR précis (plus lent)…")
+                if DEBUG:
+                    st.json({"silae_debug": silae_dbg, "cout_total_line": cout_total_line})
 
-                    cout_total, cout_total_line = extract_cout_global_from_image(page_images[0])
-
-                status.write("SILAE : OCR congés payés…")
-
-                cp = extract_cp_from_image_silae(page_images[0])
 
         # Total organismes sociaux
         organismes_total = (
