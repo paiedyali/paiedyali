@@ -13,6 +13,7 @@ import os
 
 import streamlit as st
 import pdfplumber
+import fitz
 import pytesseract
 from pytesseract import Output
 
@@ -309,11 +310,25 @@ def eur(v):
 # PDF text + OCR auto
 # ------------------------------------------------------------
 def pdf_to_page_images(file, dpi=250):
+    """Rasterise le PDF en images PIL.
+    Utilise PyMuPDF (fitz) pour être nettement plus rapide que pdfplumber.to_image(),
+    ce qui compte beaucoup sur Render free.
+    """
     file.seek(0)
+    data = file.read()
+    doc = fitz.open(stream=data, filetype="pdf")
     images = []
-    with pdfplumber.open(file) as pdf:
-        for p in pdf.pages:
-            images.append(p.to_image(resolution=dpi).original)
+    # dpi -> matrice (72 dpi est l'unité de base)
+    zoom = max(1.0, float(dpi) / 72.0)
+    mat = fitz.Matrix(zoom, zoom)
+    for page in doc:
+        pix = page.get_pixmap(matrix=mat, alpha=False)
+        # conversion Pixmap -> PIL Image
+        from PIL import Image
+        im = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        images.append(im)
+    doc.close()
+    file.seek(0)
     return images
 
 
@@ -447,11 +462,36 @@ def extract_employee_id(text: str):
 
     return None
 
-def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
+
+def ocr_light_payslip_zones(page_img):
+    """OCR rapide pour 'comprendre' un bulletin scanné sans OCR pleine page.
+    On OCR uniquement 2 bandes (haut + bas) qui contiennent quasi toujours les mots-clés
+    (bulletin/salaire/net/cotisations) et, pour SILAE, le tableau 'Coût global'.
     """
-    Version 'par page' de l'extraction :
-    - texte PDF classique par page
-    - OCR seulement si page quasi vide (ou force_ocr)
+    W, H = page_img.width, page_img.height
+    top = page_img.crop((0, 0, W, int(H * 0.33)))
+    bottom = page_img.crop((0, int(H * 0.60), W, H))
+
+    cfg = "--psm 6"
+    try:
+        t_top = pytesseract.image_to_string(top, lang="fra", config=cfg)
+    except Exception:
+        t_top = ""
+    try:
+        t_bottom = pytesseract.image_to_string(bottom, lang="fra", config=cfg)
+    except Exception:
+        t_bottom = ""
+
+    return norm_spaces((t_top + "\n" + t_bottom).strip())
+
+
+def extract_text_auto_per_page(file, dpi=250, force_ocr=False, ocr_mode: str = "light"):
+    """
+    Extraction par page :
+    - texte PDF classique par page (si présent)
+    - si page quasi vide : OCR
+        * ocr_mode='light' (par défaut) : OCR sur zones (haut+bas), beaucoup plus rapide
+        * ocr_mode='full'              : OCR pleine page (plus lent, mais plus complet)
     Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
     """
     file.seek(0)
@@ -461,7 +501,7 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     page_ocr = []
     file.seek(0)
     with pdfplumber.open(file) as pdf:
-        for i, p in enumerate(pdf.pages):
+        for p in pdf.pages:
             t = p.extract_text() or ""
             t = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(t)))
             page_texts.append(t)
@@ -471,9 +511,14 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     for i, t in enumerate(page_texts):
         if force_ocr or len(t) < 40:
             try:
-                ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
+                if ocr_mode == "full":
+                    ocr_t = pytesseract.image_to_string(images[i], lang="fra")
+                else:
+                    ocr_t = ocr_light_payslip_zones(images[i])
+                ocr_t = norm_spaces(ocr_t)
             except Exception:
                 ocr_t = ""
+            # même si c'est 'light', ça donne assez de contexte pour valider/détecter format
             if len(ocr_t) > len(t):
                 page_texts[i] = ocr_t
             page_ocr[i] = True
@@ -1553,7 +1598,7 @@ if uploaded is not None:
         # Crédit consommé ✅
         # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
         file_obj = io.BytesIO(uploaded.getvalue())
-        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE, ocr_mode="light")
 
 
         status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
@@ -1568,6 +1613,15 @@ if uploaded is not None:
             st.stop()
 
         fmt, fmt_dbg = detect_format(text)
+
+        # Si QUADRA et PDF scanné : on a besoin d'un OCR plus complet pour les totaux.
+        if fmt == "QUADRA" and used_ocr:
+            status.write("🔎 QUADRA détecté : OCR complet (nécessaire pour l'analyse)…")
+            file_obj.seek(0)
+            text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+                file_obj, dpi=DPI, force_ocr=True, ocr_mode="full"
+            )
+            status.write("✅ OCR complet terminé")
 
 
         status.write(f"✅ Document valide — format détecté: {fmt}")
