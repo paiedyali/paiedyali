@@ -13,9 +13,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app.py ./app.py
-
-ENV PORT=8501
-EXPOSE 8501
+EXPOSE 10000
 
 # Streamlit config: listen on all interfaces
-CMD ["streamlit", "run", "app.py", "--server.address=0.0.0.0", "--server.port=8501", "--browser.gatherUsageStats=false"]
+CMD ["bash", "-lc", "python -m streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true --server.fileWatcherType=none --browser.gatherUsageStats=false"]
+
