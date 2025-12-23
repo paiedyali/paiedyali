@@ -15,6 +15,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY app.py ./app.py
 EXPOSE 10000
 
-# Streamlit config: listen on all interfaces
 CMD ["bash", "-lc", "python -m streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true --server.fileWatcherType=none --browser.gatherUsageStats=false"]
 
