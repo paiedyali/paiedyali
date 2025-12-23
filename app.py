@@ -10,6 +10,7 @@ import io
 import re
 import datetime as dt
 import os
+import psycopg
 
 import streamlit as st
 import pdfplumber
@@ -57,6 +58,68 @@ DEBUG = st.checkbox("Mode debug", value=False)
 PRICE_EUR = 7.50
 PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "").strip()  # ex: https://buy.stripe.com/...
 ALLOW_NO_PAYMENT = os.getenv("ALLOW_NO_PAYMENT", "false").lower() == "true"
+DB_URL = os.getenv("DATABASE_URL", "").strip()
+
+def db_conn():
+    if not DB_URL:
+        return None
+    return psycopg.connect(DB_URL)
+
+def db_init():
+    conn = db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+            create table if not exists stripe_sessions (
+              session_id text primary key,
+              paid_at timestamptz not null default now(),
+              consumed_at timestamptz
+            );
+            """)
+    conn.close()
+
+def db_register_paid_session(session_id: str):
+    """Enregistre un paiement (idempotent)."""
+    if not session_id:
+        return
+    conn = db_conn()
+    if not conn:
+        return
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "insert into stripe_sessions(session_id) values (%s) on conflict do nothing",
+                (session_id,),
+            )
+    conn.close()
+
+def db_consume(session_id: str) -> bool:
+    """Consomme 1 paiement (= 1 analyse). Retourne True si consommé, False sinon."""
+    if not session_id:
+        return False
+    conn = db_conn()
+    if not conn:
+        return False
+    with conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """
+                update stripe_sessions
+                set consumed_at = now()
+                where session_id = %s and consumed_at is null
+                returning session_id
+                """,
+                (session_id,),
+            )
+            row = cur.fetchone()
+    conn.close()
+    return bool(row)
+
+# Initialise la table au démarrage
+db_init()
+
 
 # ------------------------------------------------------------
 # OPTION (recommandé en prod) : Webhook Stripe (anti-fraude 'béton')
@@ -113,6 +176,9 @@ if not paid_ok:
     if DEBUG:
         st.info(f"[debug] accès refusé: {paid_reason}")
     st.stop()
+    sid = _get_query_param("session_id") or _get_query_param("checkout_session_id")
+db_register_paid_session(sid)
+
 
 # ------------------------------------------------------------
 # Crédit d'analyse : 1 paiement = 1 analyse
@@ -1351,6 +1417,18 @@ if uploaded is not None:
     # Streamlit relance le script à chaque interaction.
     # Un bouton explicite évite les "PDF reçu mais rien après".
     if st.button("Analyser le bulletin", type="primary"):
+        sid = _get_query_param("session_id") or _get_query_param("checkout_session_id")
+
+        if not db_consume(sid):
+            st.error("🔒 Paiement déjà utilisé. 1 paiement = 1 analyse.")
+            st.stop()
+
+        # 👉 L'ANALYSE COMMENCE ICI (le reste de ton code)
+        # extract_text_auto_per_page(...)
+        # validate_uploaded_pdf(...)
+        # etc.
+
+
 
         # ------------------------------------------------------------
 
