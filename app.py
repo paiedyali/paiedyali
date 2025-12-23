@@ -10,7 +10,6 @@ import io
 import re
 import datetime as dt
 import os
-import psycopg
 
 import streamlit as st
 import pdfplumber
@@ -22,34 +21,10 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
-
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-import streamlit as st
-
-st.set_page_config(
-    page_title="Lecteur bulletin (Quadra + SILAE)",
-    layout="wide"
-)
-
-# =========================
-# Initialisation DB (1 fois)
-# =========================
-@st.cache_resource
-def init_db_once():
-    try:
-        db_init()  # ta fonction existante
-    except Exception as e:
-        # Ne bloque jamais l'app au démarrage
-        print("DB init failed:", repr(e), flush=True)
-    return True
-
-init_db_once()
-
-# =========================
-# UI – Page d'accueil
-# =========================
+st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 
@@ -81,82 +56,6 @@ DEBUG = st.checkbox("Mode debug", value=False)
 PRICE_EUR = 7.50
 PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "").strip()  # ex: https://buy.stripe.com/...
 ALLOW_NO_PAYMENT = os.getenv("ALLOW_NO_PAYMENT", "false").lower() == "true"
-DB_URL = os.getenv("DATABASE_URL", "").strip()
-
-def db_conn():
-    if not DB_URL:
-        return None
-    return psycopg.connect(DB_URL)
-
-def db_init():
-    conn = db_conn()
-    if not conn:
-        return
-    with conn:
-        with conn.cursor() as cur:
-            cur.execute("""
-            create table if not exists stripe_sessions (
-              session_id text primary key,
-              paid_at timestamptz not null default now(),
-              consumed_at timestamptz
-            );
-            """)
-    conn.close()
-
-def db_register_paid_session(session_id: str):
-    """Enregistre un paiement (idempotent)."""
-    if not session_id:
-        return
-    conn = db_conn()
-    if not conn:
-        return
-    with conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                "insert into stripe_sessions(session_id) values (%s) on conflict do nothing",
-                (session_id,),
-            )
-    conn.close()
-
-def db_consume(session_id: str) -> bool:
-    """Consomme 1 paiement (= 1 analyse). Retourne True si consommé, False sinon."""
-    if not session_id:
-        return False
-    conn = db_conn()
-    if not conn:
-        return False
-    with conn:
-        with conn.cursor() as cur:
-            cur.execute(
-                """
-                update stripe_sessions
-                set consumed_at = now()
-                where session_id = %s and consumed_at is null
-                returning session_id
-                """,
-                (session_id,),
-            )
-            row = cur.fetchone()
-    conn.close()
-    return bool(row)
-
-# Initialise la table au démarrage
-
-
-# ------------------------------------------------------------
-# OPTION (recommandé en prod) : Webhook Stripe (anti-fraude 'béton')
-#
-# Le principe :
-# 1) Stripe appelle ton serveur (endpoint webhook) sur checkout.session.completed
-# 2) Ton serveur enregistre en base : session_id -> credit=1 (non consommé)
-# 3) L'app Streamlit appelle ton serveur pour vérifier/consommer un crédit
-#
-# Dans Streamlit (ici), tu peux remplacer is_payment_ok() + session_state par :
-#   - GET  /api/credits?session_id=...  -> {credits: 1}
-#   - POST /api/consume?session_id=... -> {ok: true}
-#
-# Avantage : 1 paiement = 1 analyse même si l'utilisateur change de navigateur/appareil.
-# ------------------------------------------------------------
 
 def _get_query_param(name: str):
     """Compat Streamlit: query_params (>=1.32) ou experimental_get_query_params (ancien)."""
@@ -188,32 +87,16 @@ def is_payment_ok() -> tuple[bool, str]:
 
 paid_ok, paid_reason = is_payment_ok()
 if not paid_ok:
-    ...
+    st.markdown("## Vérification — 7,50 €")
+    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
+    if PAYMENT_LINK:
+        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
+        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
+    else:
+        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
+    if DEBUG:
+        st.info(f"[debug] accès refusé: {paid_reason}")
     st.stop()
-
-sid = _get_query_param("session_id") or _get_query_param("checkout_session_id")
-db_register_paid_session(sid)
-
-
-# ------------------------------------------------------------
-# Crédit d'analyse : 1 paiement = 1 analyse
-#
-# Remarque : Streamlit relance le script à chaque interaction.
-# On 'consomme' le paiement côté session navigateur dès qu'on démarre l'analyse.
-# Pour une protection 'béton' multi-navigateurs/appareils, voir la section Webhook Stripe plus bas.
-# ------------------------------------------------------------
-def _get_session_id_for_credit():
-    return _get_query_param("session_id") or _get_query_param("checkout_session_id")
-
-if "analysis_credit_used_for" not in st.session_state:
-    # stocke le session_id (Stripe) pour lequel le crédit a été consommé
-    st.session_state.analysis_credit_used_for = None
-
-# si l'utilisateur revient avec un NOUVEAU session_id payé, on ré-autorise 1 analyse
-_sid = _get_session_id_for_credit()
-if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.session_state.analysis_credit_used_for != _sid):
-    # nouvelle session de paiement => nouveau crédit
-    st.session_state.analysis_credit_used_for = None
 
 # ------------------------------------------------------------
 # Options d'analyse (après paiement)
@@ -987,27 +870,6 @@ def extract_cp_quadra(text: str):
 # ------------------------------------------------------------
 # SILAE — coût global (mensuel) via OCR zone, CP via OCR bas gauche
 # ------------------------------------------------------------
-def extract_cout_global_fast(page_img):
-    """Version rapide (souvent) : OCR d'une zone en haut de page puis recherche 'coût global'.
-    Fallback vers extract_cout_global_from_image() si échec.
-    """
-    try:
-        W, H = page_img.width, page_img.height
-        crop = page_img.crop((0, 0, W, int(H * 0.40)))
-        zone_text = norm_spaces(pytesseract.image_to_string(crop, lang="fra"))
-        lines = [l.strip() for l in zone_text.splitlines() if l.strip()]
-        for i, l in enumerate(lines):
-            ll = l.lower()
-            if ("coût global" in ll) or ("cout global" in ll):
-                chunk = " ".join(lines[i:i+4])
-                vals = extract_amounts_money(chunk)
-                vals_ok = [v for v in vals if 0 < v < 20000]
-                if vals_ok:
-                    return vals_ok[0], f"fast_ocr: {chunk[:200]}"
-        return None, f"fast_ocr_nohit: {zone_text[:220]}"
-    except Exception as e:
-        return None, f"fast_ocr_error:{type(e).__name__}"
-
 def extract_cout_global_from_image(page_img):
     """
     Repère le titre "Coût global" et lit le montant mensuel juste en dessous.
@@ -1432,77 +1294,18 @@ if uploaded is not None:
     # Streamlit relance le script à chaque interaction.
     # Un bouton explicite évite les "PDF reçu mais rien après".
     if st.button("Analyser le bulletin", type="primary"):
-
-        if not db_consume(sid):
-            st.error("🔒 Paiement déjà utilisé. 1 paiement = 1 analyse.")
-            st.stop()
-
-        # 👉 ICI commence ton analyse
-        # extract_text_auto_per_page(...)
-        # validate_uploaded_pdf(...)
-        # etc.
-
-
-        # 👉 L'ANALYSE COMMENCE ICI (le reste de ton code)
-        # extract_text_auto_per_page(...)
-        # validate_uploaded_pdf(...)
-        # etc.
-
-
-
-        # ------------------------------------------------------------
-
-        # Anti-rejeu : 1 paiement = 1 analyse (consommation au démarrage)
-
-        # ------------------------------------------------------------
-
-        _sid = _get_session_id_for_credit()
-
-        if st.session_state.analysis_credit_used_for == _sid:
-
-            st.error(
-    "🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n"
-    "➡️ Pour analyser un autre bulletin, repasse par le paiement."
-)
-
-
-            st.stop()
-
-
-        import time
-
-        t0 = time.time()
-
-        status = st.status("Démarrage de l'analyse…", expanded=True)
-
-        status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
-
-
-        # On consomme le crédit dès maintenant (protège contre refresh/re-run)
-
-        st.session_state.analysis_credit_used_for = _sid
         # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
         file_obj = io.BytesIO(uploaded.getvalue())
         text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
 
-
-        status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
-
-        status.write("2/6 Vérification du document…")
         ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
         if not ok_doc:
-            status.update(label="Analyse interrompue", state="error")
             st.error(msg_doc)
             if DEBUG:
-                    st.json(doc_dbg)
+                st.json(doc_dbg)
             st.stop()
 
         fmt, fmt_dbg = detect_format(text)
-
-
-        status.write(f"✅ Document valide — format détecté: {fmt}")
-
-        status.write("3/6 Extraction des champs principaux…")
 
         if DEBUG:
             st.write(f"Format détecté : **{fmt}**")
@@ -1554,9 +1357,6 @@ if uploaded is not None:
         cout_total_line = None
         cp = {"cp_n1": None, "cp_n": None, "cp_total": None}
 
-
-        status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
-
         # Extraction par format
         if fmt == "QUADRA":
             charges_sal, charges_pat, charges_line, charges_method = extract_charges_quadra(text)
@@ -1578,19 +1378,7 @@ if uploaded is not None:
                         break
 
             if page_images:
-
-                status.write("SILAE : OCR 'Coût global' (rapide)…")
-
-                cout_total, cout_total_line = extract_cout_global_fast(page_images[0])
-
-                if cout_total is None:
-
-                    status.write("SILAE : fallback OCR précis (plus lent)…")
-
-                    cout_total, cout_total_line = extract_cout_global_from_image(page_images[0])
-
-                status.write("SILAE : OCR congés payés…")
-
+                cout_total, cout_total_line = extract_cout_global_from_image(page_images[0])
                 cp = extract_cp_from_image_silae(page_images[0])
 
         # Total organismes sociaux
@@ -1601,11 +1389,6 @@ if uploaded is not None:
         )
 
         # UI synthèse
-
-        status.write("✅ Extraction terminée")
-
-        status.write("5/6 Affichage de la synthèse…")
-
         st.subheader("🎯 L'essentiel, sans jargon")
 
         col1, col2 = st.columns(2)
@@ -1663,11 +1446,6 @@ if uploaded is not None:
         }
 
         pdf_buf = build_pdf(fields, comments, fmt_name=fmt)
-
-
-        status.write("6/6 Génération du PDF de synthèse…")
-
-        status.update(label=f"Analyse terminée en {time.time()-t0:.1f}s", state="complete")
 
         st.download_button(
             "⬇️ Télécharger la synthèse PDF",
