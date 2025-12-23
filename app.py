@@ -1361,11 +1361,11 @@ if uploaded is not None:
 
         if st.session_state.analysis_credit_used_for == _sid:
 
-            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.
+            st.error(
+    "🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n"
+    "➡️ Pour analyser un autre bulletin, repasse par le paiement."
+)
 
-"
-
-                     "➡️ Pour analyser un autre bulletin, repasse par le paiement.")
 
             st.stop()
 
