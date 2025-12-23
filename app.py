@@ -1474,8 +1474,6 @@ if uploaded is not None:
                     "fmt_dbg": fmt_dbg,
                 }
             )
-else:
-    st.info("En attente d'un PDF…")
 
 else:
     st.info("En attente d'un PDF…")
