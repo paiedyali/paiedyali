@@ -17,3 +17,4 @@ EXPOSE 10000
 
 CMD ["bash", "-lc", "python -m streamlit run app.py --server.address=0.0.0.0 --server.port=$PORT --server.headless=true --server.fileWatcherType=none --browser.gatherUsageStats=false"]
 
+ENV STREAMLIT_BROWSER_GATHER_USAGE_STATS=false
