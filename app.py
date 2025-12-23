@@ -27,8 +27,13 @@ from reportlab.pdfgen import canvas
 # UI
 # ------------------------------------------------------------
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
-st.write("✅ BOOT OK")
-st.stop()
+@st.cache_resource
+def init_db_once():
+    
+    return True
+
+init_db_once()
+
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 
@@ -120,7 +125,6 @@ def db_consume(session_id: str) -> bool:
     return bool(row)
 
 # Initialise la table au démarrage
-db_init()
 
 
 # ------------------------------------------------------------
