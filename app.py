@@ -20,13 +20,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
-import os
-import streamlit as st
 
-if os.getenv("DATABASE_URL"):
-    st.success("✅ Base de données connectée")
-else:
-    st.error("❌ DATABASE_URL manquant")
 
 # ------------------------------------------------------------
 # UI
