@@ -27,6 +27,8 @@ from reportlab.pdfgen import canvas
 # UI
 # ------------------------------------------------------------
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
+st.write("✅ BOOT OK")
+st.stop()
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 
