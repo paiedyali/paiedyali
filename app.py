@@ -13,7 +13,6 @@ import os
 
 import streamlit as st
 import pdfplumber
-import fitz
 import pytesseract
 from pytesseract import Output
 
@@ -189,7 +188,7 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
 # Options d'analyse (après paiement)
 # ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
-DPI = st.selectbox("Qualité OCR (DPI) — 150 rapide, 200 plus précis", options=[150, 200], index=0)
+DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
@@ -310,25 +309,11 @@ def eur(v):
 # PDF text + OCR auto
 # ------------------------------------------------------------
 def pdf_to_page_images(file, dpi=250):
-    """Rasterise le PDF en images PIL.
-    Utilise PyMuPDF (fitz) pour être nettement plus rapide que pdfplumber.to_image(),
-    ce qui compte beaucoup sur Render free.
-    """
     file.seek(0)
-    data = file.read()
-    doc = fitz.open(stream=data, filetype="pdf")
     images = []
-    # dpi -> matrice (72 dpi est l'unité de base)
-    zoom = max(1.0, float(dpi) / 72.0)
-    mat = fitz.Matrix(zoom, zoom)
-    for page in doc:
-        pix = page.get_pixmap(matrix=mat, alpha=False)
-        # conversion Pixmap -> PIL Image
-        from PIL import Image
-        im = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        images.append(im)
-    doc.close()
-    file.seek(0)
+    with pdfplumber.open(file) as pdf:
+        for p in pdf.pages:
+            images.append(p.to_image(resolution=dpi).original)
     return images
 
 
@@ -462,36 +447,11 @@ def extract_employee_id(text: str):
 
     return None
 
-
-def ocr_light_payslip_zones(page_img):
-    """OCR rapide pour 'comprendre' un bulletin scanné sans OCR pleine page.
-    On OCR uniquement 2 bandes (haut + bas) qui contiennent quasi toujours les mots-clés
-    (bulletin/salaire/net/cotisations) et, pour SILAE, le tableau 'Coût global'.
+def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     """
-    W, H = page_img.width, page_img.height
-    top = page_img.crop((0, 0, W, int(H * 0.33)))
-    bottom = page_img.crop((0, int(H * 0.60), W, H))
-
-    cfg = "--psm 6"
-    try:
-        t_top = pytesseract.image_to_string(top, lang="fra", config=cfg)
-    except Exception:
-        t_top = ""
-    try:
-        t_bottom = pytesseract.image_to_string(bottom, lang="fra", config=cfg)
-    except Exception:
-        t_bottom = ""
-
-    return norm_spaces((t_top + "\n" + t_bottom).strip())
-
-
-def extract_text_auto_per_page(file, dpi=250, force_ocr=False, ocr_mode: str = "light"):
-    """
-    Extraction par page :
-    - texte PDF classique par page (si présent)
-    - si page quasi vide : OCR
-        * ocr_mode='light' (par défaut) : OCR sur zones (haut+bas), beaucoup plus rapide
-        * ocr_mode='full'              : OCR pleine page (plus lent, mais plus complet)
+    Version 'par page' de l'extraction :
+    - texte PDF classique par page
+    - OCR seulement si page quasi vide (ou force_ocr)
     Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
     """
     file.seek(0)
@@ -501,7 +461,7 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False, ocr_mode: str = "
     page_ocr = []
     file.seek(0)
     with pdfplumber.open(file) as pdf:
-        for p in pdf.pages:
+        for i, p in enumerate(pdf.pages):
             t = p.extract_text() or ""
             t = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(t)))
             page_texts.append(t)
@@ -511,14 +471,9 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False, ocr_mode: str = "
     for i, t in enumerate(page_texts):
         if force_ocr or len(t) < 40:
             try:
-                if ocr_mode == "full":
-                    ocr_t = pytesseract.image_to_string(images[i], lang="fra")
-                else:
-                    ocr_t = ocr_light_payslip_zones(images[i])
-                ocr_t = norm_spaces(ocr_t)
+                ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
             except Exception:
                 ocr_t = ""
-            # même si c'est 'light', ça donne assez de contexte pour valider/détecter format
             if len(ocr_t) > len(t):
                 page_texts[i] = ocr_t
             page_ocr[i] = True
@@ -1251,40 +1206,7 @@ def _choose_silae_page_index(page_images, page_texts):
     return 0
 
 
-
-def _render_pdf_clip_image(pdf_bytes: bytes, page_index: int, clip_rel=(0.0, 0.52, 1.0, 1.0), dpi: int = 300):
-    """Rend uniquement une zone (clip) d'une page PDF en image PIL, à haut DPI.
-    clip_rel = (x0,y0,x1,y1) en proportions de la page.
-    Très utile pour OCR rapide/fiable sur une petite zone (ex: tableau 'Coût global')."""
-    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-    try:
-        page = doc.load_page(page_index)
-        rect = page.rect
-        x0 = rect.x0 + clip_rel[0] * rect.width
-        y0 = rect.y0 + clip_rel[1] * rect.height
-        x1 = rect.x0 + clip_rel[2] * rect.width
-        y1 = rect.y0 + clip_rel[3] * rect.height
-        clip = fitz.Rect(x0, y0, x1, y1)
-        zoom = dpi / 72.0
-        pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), clip=clip, alpha=False)
-        from PIL import Image
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        return img
-    finally:
-        doc.close()
-
-
-def _prep_for_ocr(img):
-    """Prétraitement léger pour aider Tesseract (sans OpenCV)."""
-    try:
-        g = img.convert("L")
-        # seuillage simple
-        g = g.point(lambda p: 255 if p > 180 else 0)
-        return g
-    except Exception:
-        return img
-
-def extract_silae_cost_and_cp(page_img, page_text: str | None = None, pdf_bytes: bytes | None = None, page_index: int | None = None):
+def extract_silae_cost_and_cp(page_img, page_text: str | None = None):
     """Extraction optimisée SILAE (plus rapide que 2 OCR séparés).
     - tentative via texte (si présent)
     - OCR bande basse pour coût global + CP
@@ -1308,9 +1230,8 @@ def extract_silae_cost_and_cp(page_img, page_text: str | None = None, pdf_bytes:
 
     # 2) OCR bande basse
     W, H = page_img.width, page_img.height
-    bottom = page_img.crop((0, int(H * 0.55), W, H))  # on remonte un peu pour capter la ligne
-    ocr_img = _prep_for_ocr(bottom)
-    ocr_text = norm_spaces(pytesseract.image_to_string(ocr_img, lang="fra", config="--psm 6"))
+    bottom = page_img.crop((0, int(H * 0.62), W, H))
+    ocr_text = norm_spaces(pytesseract.image_to_string(bottom, lang="fra", config="--psm 6"))
     debug["bottom_ocr_head"] = ocr_text[:220]
 
     cout = None
@@ -1326,25 +1247,7 @@ def extract_silae_cost_and_cp(page_img, page_text: str | None = None, pdf_bytes:
 
     cp = extract_cp_from_text_any(ocr_text)
 
-    
-    # 2bis) si 'Coût global' introuvable, OCR haute résolution sur un CLIP PDF (rapide car petite zone)
-    if cout is None and (pdf_bytes is not None) and (page_index is not None):
-        try:
-            clip_img = _render_pdf_clip_image(pdf_bytes, page_index, clip_rel=(0.0, 0.45, 1.0, 1.0), dpi=300)
-            clip_txt = norm_spaces(pytesseract.image_to_string(_prep_for_ocr(clip_img), lang="fra", config="--psm 6"))
-            debug["clip300_ocr_head"] = clip_txt[:220]
-            for line in clip_txt.splitlines():
-                ll = line.lower()
-                if ("coût global" in ll) or ("cout global" in ll):
-                    vals = [v for v in extract_amounts_money(line) if 0 < v < 50000]
-                    if vals:
-                        cout = vals[-1]
-                        cout_line = f"clip300: {line[:200]}"
-                        break
-        except Exception as e:
-            debug["clip300_error"] = type(e).__name__
-
-# fallback CP petite zone (si pas trouvé)
+    # fallback CP petite zone (si pas trouvé)
     if cp.get("cp_total") is None:
         cp = extract_cp_from_image_silae(page_img)
         debug["cp_fallback"] = True
@@ -1356,126 +1259,6 @@ def extract_silae_cost_and_cp(page_img, page_text: str | None = None, pdf_bytes:
 
     return cout, (cout_line or "bottom_ocr"), cp, debug
 
-
-
-# ------------------------------------------------------------
-# SILAE — extraction ciblée multi-zones (Brut / Cotisations / Net / Coût global / CP)
-# ------------------------------------------------------------
-
-def _find_amount_near_labels(text: str, labels: list[str], max_value: float | None = None):
-    """Trouve un montant (float) dans la ligne qui contient un des labels (ou la ligne suivante).
-    Retourne (valeur, debug_line)"""
-    if not text:
-        return None, None
-    lines = [norm_spaces(l) for l in text.splitlines() if l.strip()]
-    for i, line in enumerate(lines):
-        ll = line.lower()
-        if any(lbl in ll for lbl in labels):
-            vals = extract_amounts_money(line)
-            if not vals and i + 1 < len(lines):
-                vals = extract_amounts_money(lines[i + 1])
-                line = line + " | " + lines[i + 1]
-            if vals:
-                # souvent la dernière valeur de la ligne est le bon montant (colonne à droite)
-                cand = vals[-1]
-                if max_value is None or cand <= max_value:
-                    return cand, line[:220]
-    return None, None
-
-
-def extract_silae_figures_from_pdf(pdf_bytes: bytes, page_index: int = 0):
-    """Extraction SILAE robuste pour PDF scannés.
-    On OCR uniquement des zones :
-      - haut : Brut
-      - milieu : Total cotisations (salariales/patronales)
-      - bas : Net payé + Coût global
-      - bas gauche : Congés payés (solde)
-    Retourne dict {brut, charges_sal, charges_pat, net_paye, cout_global, cp, debug}
-    """
-    dbg = {}
-
-    # Clips (ratios ajustables)
-    # haut : libellés + brut
-    img_top = _render_pdf_clip_image(pdf_bytes, page_index, clip_rel=(0.0, 0.00, 1.0, 0.28), dpi=300)
-    # milieu : cotisations (tableau central)
-    img_mid = _render_pdf_clip_image(pdf_bytes, page_index, clip_rel=(0.0, 0.28, 1.0, 0.70), dpi=300)
-    # bas : récap (net / coût global)
-    img_bot = _render_pdf_clip_image(pdf_bytes, page_index, clip_rel=(0.0, 0.70, 1.0, 1.00), dpi=300)
-    # bas gauche : congés
-    img_cp = _render_pdf_clip_image(pdf_bytes, page_index, clip_rel=(0.0, 0.70, 0.55, 1.00), dpi=300)
-
-    txt_top = norm_spaces(pytesseract.image_to_string(_prep_for_ocr(img_top), lang="fra", config="--psm 6"))
-    txt_mid = norm_spaces(pytesseract.image_to_string(_prep_for_ocr(img_mid), lang="fra", config="--psm 6"))
-    txt_bot = norm_spaces(pytesseract.image_to_string(_prep_for_ocr(img_bot), lang="fra", config="--psm 6"))
-    txt_cp = norm_spaces(pytesseract.image_to_string(_prep_for_ocr(img_cp), lang="fra", config="--psm 6"))
-
-    dbg["top_head"] = txt_top[:220]
-    dbg["mid_head"] = txt_mid[:220]
-    dbg["bot_head"] = txt_bot[:220]
-    dbg["cp_head"] = txt_cp[:220]
-
-    # Brut (en haut)
-    brut, brut_line = _find_amount_near_labels(
-        txt_top,
-        labels=["salaire brut", "brut"],
-        max_value=200000,  # garde-fou
-    )
-
-    # Cotisations (milieu) — chercher "total cotisations" puis 2 montants (sal / pat)
-    charges_sal = None
-    charges_pat = None
-    charges_line = None
-    lines_mid = [l.strip() for l in txt_mid.splitlines() if l.strip()]
-    for i, line in enumerate(lines_mid):
-        ll = line.lower()
-        if ("total" in ll) and ("cotis" in ll):
-            vals = extract_amounts_money(line)
-            # parfois les montants sont sur la ligne suivante
-            if len(vals) < 2 and i + 1 < len(lines_mid):
-                vals2 = extract_amounts_money(lines_mid[i + 1])
-                vals = vals + vals2
-                line = line + " | " + lines_mid[i + 1]
-            if len(vals) >= 2:
-                charges_sal, charges_pat = vals[0], vals[1]
-                charges_line = line[:220]
-                break
-
-    # Net payé + Coût global (bas)
-    net_paye, net_line = _find_amount_near_labels(
-        txt_bot,
-        labels=["net pay", "net à pay", "net a pay"],
-        max_value=200000,
-    )
-
-    cout_global, cout_line = _find_amount_near_labels(
-        txt_bot,
-        labels=["coût global", "cout global"],
-        max_value=500000,
-    )
-
-    # Congés payés (bas gauche) : on réutilise le parseur "Solde"
-    cp = extract_cp_from_text_any(txt_cp)
-    if cp.get("cp_total") is None:
-        # dernier recours : méthode image existante sur le clip
-        try:
-            cp = extract_cp_from_image_silae(img_cp)
-            dbg["cp_fallback_image"] = True
-        except Exception:
-            pass
-
-    return {
-        "brut": brut,
-        "brut_line": brut_line,
-        "charges_sal": charges_sal,
-        "charges_pat": charges_pat,
-        "charges_line": charges_line,
-        "net_paye": net_paye,
-        "net_line": net_line,
-        "cout_global": cout_global,
-        "cout_line": cout_line,
-        "cp": cp,
-        "debug": dbg,
-    }
 
 def build_comments(brut, charges_sal, csg_nd, pas, charges_pat, acompte):
     out = []
@@ -1769,9 +1552,8 @@ if uploaded is not None:
 
         # Crédit consommé ✅
         # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
-        pdf_bytes = uploaded.getvalue()
-        file_obj = io.BytesIO(pdf_bytes)
-        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE, ocr_mode="light")
+        file_obj = io.BytesIO(uploaded.getvalue())
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
 
 
         status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
@@ -1786,15 +1568,6 @@ if uploaded is not None:
             st.stop()
 
         fmt, fmt_dbg = detect_format(text)
-
-        # Si QUADRA et PDF scanné : on a besoin d'un OCR plus complet pour les totaux.
-        if fmt == "QUADRA" and used_ocr:
-            status.write("🔎 QUADRA détecté : OCR complet (nécessaire pour l'analyse)…")
-            file_obj.seek(0)
-            text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-                file_obj, dpi=DPI, force_ocr=True, ocr_mode="full"
-            )
-            status.write("✅ OCR complet terminé")
 
 
         status.write(f"✅ Document valide — format détecté: {fmt}")
@@ -1861,52 +1634,32 @@ if uploaded is not None:
             cp = extract_cp_quadra(text)
 
         elif fmt == "SILAE":
+            # charges salariales/patronales : chercher une ligne "total cotisations et contributions"
+            # (si absent dans ton modèle, ça restera None et c'est OK pour tester)
+            lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+            low_lines = [l.lower() for l in lines]
+            for i, ll in enumerate(low_lines):
+                if ("total" in ll) and ("cotis" in ll) and ("contrib" in ll):
+                    vals = extract_amounts_money(lines[i])
+                    if len(vals) >= 2:
+                        charges_sal, charges_pat = vals[0], vals[1]
+                        charges_line = lines[i]
+                        charges_method = "silae_total_cotis_contrib"
+                        break
 
-            # SILAE : beaucoup de PDFs sont des scans (pas de texte sélectionnable).
-            # On privilégie donc un OCR ciblé (zones) à haut DPI pour extraire :
-            # Brut (haut), Cotisations (milieu), Net/Coût global (bas), CP (bas gauche).
             if page_images:
+
                 idx_page = _choose_silae_page_index(page_images, page_texts)
-            else:
-                idx_page = 0
-
-            status.write(f"SILAE : page analysée = {idx_page + 1}/{max(1, len(page_images))}…")
-            status.write("SILAE : extraction multi-zones (brut / cotisations / net / coût global / congés)…")
-
-            silae_pack = extract_silae_figures_from_pdf(pdf_bytes, page_index=idx_page)
-
-            # Remplace/complète les valeurs extraites du texte 'light'
-            if brut is None and silae_pack.get("brut") is not None:
-                brut, brut_line = silae_pack["brut"], silae_pack.get("brut_line")
-
-            if (charges_sal is None) and (silae_pack.get("charges_sal") is not None):
-                charges_sal = silae_pack["charges_sal"]
-            if (charges_pat is None) and (silae_pack.get("charges_pat") is not None):
-                charges_pat = silae_pack["charges_pat"]
-            if charges_line is None and silae_pack.get("charges_line"):
-                charges_line = silae_pack.get("charges_line")
-                charges_method = "silae_clip_mid_total_cotis"
-
-            if net_paye is None and silae_pack.get("net_paye") is not None:
-                net_paye, net_paye_line = silae_pack["net_paye"], silae_pack.get("net_line")
-
-            # Coût global + CP
-            if silae_pack.get("cout_global") is not None:
-                cout_total, cout_total_line = silae_pack["cout_global"], silae_pack.get("cout_line")
-            else:
-                # fallback : méthode existante (bande basse + clip)
-                page_img = page_images[idx_page] if page_images else None
+                page_img = page_images[idx_page]
                 page_txt = page_texts[idx_page] if page_texts else None
-                if page_img is not None:
-                    cout_total, cout_total_line, cp, silae_dbg2 = extract_silae_cost_and_cp(
-                        page_img, page_text=page_txt, pdf_bytes=pdf_bytes, page_index=idx_page
-                    )
 
-            cp = silae_pack.get("cp") or cp
+                status.write(f"SILAE : page analysée = {idx_page + 1}/{len(page_images)}…")
+                status.write("SILAE : extraction coût global + congés (optimisée)…")
 
-            if DEBUG:
-                st.json({"silae_pack_debug": silae_pack.get("debug"), "cout_total_line": cout_total_line})
+                cout_total, cout_total_line, cp, silae_dbg = extract_silae_cost_and_cp(page_img, page_text=page_txt)
 
+                if DEBUG:
+                    st.json({"silae_debug": silae_dbg, "cout_total_line": cout_total_line})
 
 
         # Total organismes sociaux
