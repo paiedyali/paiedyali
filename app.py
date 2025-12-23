@@ -166,17 +166,10 @@ def is_payment_ok() -> tuple[bool, str]:
 
 paid_ok, paid_reason = is_payment_ok()
 if not paid_ok:
-    st.markdown("## Vérification — 7,50 €")
-    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
-    if PAYMENT_LINK:
-        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
-        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
-    else:
-        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
-    if DEBUG:
-        st.info(f"[debug] accès refusé: {paid_reason}")
+    ...
     st.stop()
-    sid = _get_query_param("session_id") or _get_query_param("checkout_session_id")
+
+sid = _get_query_param("session_id") or _get_query_param("checkout_session_id")
 db_register_paid_session(sid)
 
 
@@ -1417,11 +1410,16 @@ if uploaded is not None:
     # Streamlit relance le script à chaque interaction.
     # Un bouton explicite évite les "PDF reçu mais rien après".
     if st.button("Analyser le bulletin", type="primary"):
-        sid = _get_query_param("session_id") or _get_query_param("checkout_session_id")
 
         if not db_consume(sid):
             st.error("🔒 Paiement déjà utilisé. 1 paiement = 1 analyse.")
             st.stop()
+
+        # 👉 ICI commence ton analyse
+        # extract_text_auto_per_page(...)
+        # validate_uploaded_pdf(...)
+        # etc.
+
 
         # 👉 L'ANALYSE COMMENCE ICI (le reste de ton code)
         # extract_text_auto_per_page(...)
