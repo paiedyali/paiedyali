@@ -20,6 +20,33 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
+# Import des bibliothèques
+import io
+import re
+import datetime as dt
+import os
+
+import streamlit as st
+import pdfplumber
+import pytesseract
+from pytesseract import Output
+
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.units import cm
+from reportlab.lib import colors
+from reportlab.pdfgen import canvas
+
+# Code de vérification du fichier Loader.io
+file_path = 'static/loaderio-a1f35466c21048e1ac155fb748fcbab5'
+
+# Vérifiez si le fichier existe et fournissez le lien
+if os.path.exists(file_path):
+    st.markdown(f"Le fichier de vérification est accessible [ici](static/loaderio-a1f35466c21048e1ac155fb748fcbab5).")
+else:
+    st.write("Le fichier de vérification n'est pas encore accessible.")
+
+# Le reste de votre code Streamlit continue ici...
+
 
 # ------------------------------------------------------------
 # UI
