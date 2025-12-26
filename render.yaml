@@ -11,3 +11,7 @@ services:
         sync: false
       - key: ALLOW_NO_PAYMENT
         value: "false"
+    static:
+      path: "static"
+      expires: "1d"  # Vous pouvez définir une durée de vie pour les fichiers statiques (1 jour ici)
+
