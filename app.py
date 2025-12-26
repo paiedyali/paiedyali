@@ -1658,11 +1658,9 @@ if uploaded is not None:
             status.write("2/6 Vérification du document…")
             ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
             if not ok_doc:
-                status.update(label="Analyse interrompue", state="error")
-                st.error(msg_doc)
-                if DEBUG:
-                        st.json(doc_dbg)
-                st.stop()
+        status.write("⚠️ Vérification non concluante, poursuite de l'analyse quand même.")
+        if DEBUG:
+            st.json(doc_dbg)
 
             fmt, fmt_dbg = detect_format(text)
 
