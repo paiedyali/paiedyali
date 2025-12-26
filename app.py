@@ -20,32 +20,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
-from flask import Flask, send_from_directory
-from threading import Thread
 
-# Configuration de l'application Flask
-app = Flask(__name__)
-
-# Route pour servir les fichiers statiques
-@app.route('/static/<path:filename>')
-def serve_static(filename):
-    return send_from_directory(os.path.join(os.getcwd(), 'static'), filename)
-
-# Fonction pour lancer Streamlit après Flask
-def run_streamlit():
-    st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
-    st.title("Bienvenue sur l'application Streamlit")
-    # Votre logique Streamlit ici pour le traitement des PDF, OCR, etc.
-    # Exemple de traitement (à ajuster selon votre logique):
-    st.write("Vous pouvez maintenant télécharger et analyser les bulletins.")
-    # Ajoutez votre code de traitement de PDF et OCR ici
-    # ...
-
-if __name__ == "__main__":
-    # Lancer Flask dans un thread séparé
-    Thread(target=lambda: app.run(host='0.0.0.0', port=5000)).start()
-    # Lancer Streamlit après Flask
-    run_streamlit()
 # Import des bibliothèques
 import io
 import re
