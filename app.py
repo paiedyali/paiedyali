@@ -1681,18 +1681,18 @@ if (stored_pdf_bytes is not None) or (uploaded is not None):
     # Streamlit relance le script à chaque interaction.
     # Un bouton explicite évite les "PDF reçu mais rien après".
     
-    if st.button("Analyser le bulletin", type="primary"):
+if st.button("Analyser le bulletin", type="primary"):
 
     _sid = _get_session_id_for_credit()
-    if not _sid:
+if not _sid:
         st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
         st.stop()
 
-    if credit_is_consumed(_sid):
+if credit_is_consumed(_sid):
         st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
         st.stop()
 
-    if not credit_consume(_sid):
+if not credit_consume(_sid):
         st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
         st.stop()
 
@@ -1705,7 +1705,7 @@ if (stored_pdf_bytes is not None) or (uploaded is not None):
     status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
 
     # ✅ Choix de la source du PDF (DOIT être dans le bouton)
-    if stored_pdf_bytes is not None:
+if stored_pdf_bytes is not None:
         file_obj = io.BytesIO(stored_pdf_bytes)
     else:
         file_obj = io.BytesIO(uploaded.getvalue())
@@ -1718,7 +1718,7 @@ if (stored_pdf_bytes is not None) or (uploaded is not None):
 
     status.write("2/6 Vérification du document…")
     ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-    if not ok_doc:
+if not ok_doc:
         status.update(label="Analyse interrompue", state="error")
         st.error(msg_doc)
         if DEBUG:
