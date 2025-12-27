@@ -1699,7 +1699,7 @@ if not credit_consume(_sid):
         st.session_state.analysis_credit_used_for = _sid
     
 import time
-    t0 = time.time()
+t0 = time.time()
 
     status = st.status("Démarrage de l'analyse…", expanded=True)
     status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
