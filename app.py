@@ -1711,7 +1711,7 @@ text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_
 )
 status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
-        status.write("2/6 Vérification du document…")
+status.write("2/6 Vérification du document…")
         ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
         if not ok_doc:
             status.update(label="Analyse interrompue", state="error")
