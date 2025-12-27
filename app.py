@@ -268,7 +268,84 @@ def credit_consume(session_id: str) -> bool:
         return True
     except sqlite3.IntegrityError:
         return False
-        
+
+# ------------------------------------------------------------
+# PDF text + OCR auto
+# ------------------------------------------------------------
+def pdf_to_page_images(file, dpi=250):
+    file.seek(0)
+    images = []
+    with pdfplumber.open(file) as pdf:
+        for p in pdf.pages:
+            images.append(p.to_image(resolution=dpi).original)
+    return images
+
+
+def ocr_pdf_to_text(file, dpi=250, lang="fra") -> str:
+    imgs = pdf_to_page_images(file, dpi=dpi)
+    out = []
+    for im in imgs:
+        out.append(pytesseract.image_to_string(im, lang=lang))
+    return "\n".join(out)
+
+
+def extract_text_auto(file, dpi=250, force_ocr=False):
+    # IMPORTANT: le fichier est relu plusieurs fois (pdfplumber, conversion images, OCR)
+    # => toujours remettre le curseur au début avant chaque lecture
+    file.seek(0)
+    classic = ""
+    with pdfplumber.open(file) as pdf:
+        for p in pdf.pages:
+            classic += (p.extract_text() or "") + "\n"
+    classic = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(classic)))
+
+    file.seek(0)
+    images = pdf_to_page_images(file, dpi=dpi)
+
+    if force_ocr or len(classic) < 80:
+        file.seek(0)
+        ocr_txt = ocr_pdf_to_text(file, dpi=dpi, lang="fra")
+        ocr_txt = norm_spaces(ocr_txt)
+        return ocr_txt, True, images
+
+    return classic, False, images
+    
+def fix_doubled_letters(s: str) -> str:
+    """Supprime les lettres doublées consécutives (SSiirreett -> Siret)."""
+    result = []
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        result.append(ch)
+        if i + 1 < len(s) and s[i + 1] == ch and ch.isalpha():
+            i += 2
+        else:
+            i += 1
+    return "".join(result)
+    
+def norm_spaces(s: str) -> str:
+    s = (s or "").replace("\xa0", " ")
+    s = re.sub(r"[ \t]+", " ", s)
+    s = re.sub(r"\n{2,}", "\n", s)
+    return s.strip()
+    
+def normalize_doubled_digits_in_dates(text: str) -> str:
+    """
+    Corrige surtout les dates/années quand les chiffres sont doublés.
+    Ex: 0011//1122//22002255 -> 01/12/2025
+    """
+    t = text
+
+    def repl_date(m):
+        a = dedouble_digits_if_all_pairs(m.group(1))
+        b = dedouble_digits_if_all_pairs(m.group(2))
+        c = dedouble_digits_if_all_pairs(m.group(3))
+        return f"{a}/{b}/{c}"
+
+    t = re.sub(r"\b(\d{2,4})[\/\-]{1,2}(\d{2,4})[\/\-]{1,2}(\d{4,8})\b", repl_date, t)
+    t = re.sub(r"\b\d{8}\b", lambda m: dedouble_digits_if_all_pairs(m.group(0)), t)
+    return t
+       
 def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     """
     Version 'par page' de l'extraction :
@@ -368,18 +445,6 @@ if MODE == "precheck":
 # ------------------------------------------------------------
 # Nettoyage + montants
 # ------------------------------------------------------------
-def fix_doubled_letters(s: str) -> str:
-    """Supprime les lettres doublées consécutives (SSiirreett -> Siret)."""
-    result = []
-    i = 0
-    while i < len(s):
-        ch = s[i]
-        result.append(ch)
-        if i + 1 < len(s) and s[i + 1] == ch and ch.isalpha():
-            i += 2
-        else:
-            i += 1
-    return "".join(result)
 
 
 def dedouble_digits_if_all_pairs(token: str) -> str:
@@ -415,13 +480,6 @@ def normalize_doubled_digits_in_dates(text: str) -> str:
     t = re.sub(r"\b(\d{2,4})[\/\-]{1,2}(\d{2,4})[\/\-]{1,2}(\d{4,8})\b", repl_date, t)
     t = re.sub(r"\b\d{8}\b", lambda m: dedouble_digits_if_all_pairs(m.group(0)), t)
     return t
-
-
-def norm_spaces(s: str) -> str:
-    s = (s or "").replace("\xa0", " ")
-    s = re.sub(r"[ \t]+", " ", s)
-    s = re.sub(r"\n{2,}", "\n", s)
-    return s.strip()
 
 
 def to_float_fr(s: str):
@@ -474,47 +532,6 @@ def eur(v):
     s = f"{v:,.2f}".replace(",", " ").replace(".", ",")
     return f"{s} EUR"
 
-
-# ------------------------------------------------------------
-# PDF text + OCR auto
-# ------------------------------------------------------------
-def pdf_to_page_images(file, dpi=250):
-    file.seek(0)
-    images = []
-    with pdfplumber.open(file) as pdf:
-        for p in pdf.pages:
-            images.append(p.to_image(resolution=dpi).original)
-    return images
-
-
-def ocr_pdf_to_text(file, dpi=250, lang="fra") -> str:
-    imgs = pdf_to_page_images(file, dpi=dpi)
-    out = []
-    for im in imgs:
-        out.append(pytesseract.image_to_string(im, lang=lang))
-    return "\n".join(out)
-
-
-def extract_text_auto(file, dpi=250, force_ocr=False):
-    # IMPORTANT: le fichier est relu plusieurs fois (pdfplumber, conversion images, OCR)
-    # => toujours remettre le curseur au début avant chaque lecture
-    file.seek(0)
-    classic = ""
-    with pdfplumber.open(file) as pdf:
-        for p in pdf.pages:
-            classic += (p.extract_text() or "") + "\n"
-    classic = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(classic)))
-
-    file.seek(0)
-    images = pdf_to_page_images(file, dpi=dpi)
-
-    if force_ocr or len(classic) < 80:
-        file.seek(0)
-        ocr_txt = ocr_pdf_to_text(file, dpi=dpi, lang="fra")
-        ocr_txt = norm_spaces(ocr_txt)
-        return ocr_txt, True, images
-
-    return classic, False, images
 
 
 # ------------------------------------------------------------
