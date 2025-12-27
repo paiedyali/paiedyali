@@ -1696,7 +1696,7 @@ if not credit_consume(_sid):
         st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
         st.stop()
 
-    st.session_state.analysis_credit_used_for = _sid
+        st.session_state.analysis_credit_used_for = _sid
 
     import time
     t0 = time.time()
