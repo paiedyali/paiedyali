@@ -40,6 +40,147 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
+# ------------------------------------------------------------
+# Query params + mode
+# ------------------------------------------------------------
+def _get_query_param(name: str):
+    """Compat Streamlit: query_params (>=1.32) ou experimental_get_query_params (ancien)."""
+    if hasattr(st, "query_params"):
+        return st.query_params.get(name)
+    qp = st.experimental_get_query_params()
+    v = qp.get(name)
+    if isinstance(v, list):
+        return v[0] if v else None
+    return v
+
+MODE = (_get_query_param("mode") or "final").lower()  # precheck | final
+
+
+# ------------------------------------------------------------
+# Stripe check
+# ------------------------------------------------------------
+def is_payment_ok() -> tuple[bool, str, str | None]:
+    if ALLOW_NO_PAYMENT:
+        return True, "bypass", None
+
+    session_id = _get_query_param("session_id") or _get_query_param("checkout_session_id")
+    if not session_id:
+        return False, "missing_session_id", None
+
+    secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not secret_key:
+        return False, "missing_STRIPE_SECRET_KEY", None
+
+    try:
+        import stripe  # lazy import
+        stripe.api_key = secret_key
+        s = stripe.checkout.Session.retrieve(session_id)
+
+        paid = (getattr(s, "payment_status", None) == "paid") and (
+            getattr(s, "status", None) in ("complete", "paid", None)
+        )
+        client_ref = getattr(s, "client_reference_id", None)
+        return bool(paid), ("paid" if paid else "not_paid"), client_ref
+    except Exception as e:
+        return False, f"stripe_error:{type(e).__name__}", None
+
+
+# IMPORTANT : on calcule paid_ok AVANT de l'utiliser
+paid_ok, paid_reason, client_ref = is_payment_ok()
+
+# ------------------------------------------------------------
+# Paywall (uniquement en FINAL)
+# ------------------------------------------------------------
+if (MODE != "precheck") and (not paid_ok):
+    st.markdown("## Vérification — 7,50 €")
+    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
+    if PAYMENT_LINK:
+        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
+        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
+    else:
+        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
+    if DEBUG:
+        st.info(f"[debug] accès refusé: {paid_reason}")
+    st.stop()
+
+# ------------------------------------------------------------
+# Validation document : dépend de is_likely_payslip / detect_format / extract_period / period_key / extract_employee_id
+# => CES fonctions doivent être définies AVANT validate_uploaded_pdf.
+# ------------------------------------------------------------
+def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
+    n = len(page_texts or [])
+    all_text = "\n".join(page_texts or [])
+
+    ok_ps, dbg_ps = is_likely_payslip(all_text)
+    fmt, fmt_dbg = detect_format(all_text)
+
+    if (not ok_ps) or (fmt == "INCONNU"):
+        return (
+            False,
+            "🔒 Document refusé : ce PDF ne ressemble pas à un **bulletin de salaire** (ou format non reconnu).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
+        )
+
+    if n <= 1:
+        return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n}
+
+    if n > 2:
+        return (
+            False,
+            "🔒 Document refusé : PDF **multi-pages** (>2) non accepté. Dépose uniquement le bulletin concerné.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
+        )
+
+    p1, p2 = page_texts[0], page_texts[1]
+
+    period_all, _ = extract_period(all_text)
+    period_1, _ = extract_period(p1)
+    period_2, _ = extract_period(p2)
+
+    period_ref = period_1 or period_all
+    key_ref = period_key(period_ref)
+    key_p2 = period_key(period_2)
+
+    if not key_ref:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **période** illisible (je ne peux pas vérifier que c'est la même).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "periods": [period_1, period_2, period_all], "period_keys": [key_ref, key_p2]},
+        )
+
+    if key_p2 and (key_p2 != key_ref):
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **période différente** entre les pages.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "periods": [period_1, period_2, period_all], "period_keys": [key_ref, key_p2]},
+        )
+
+    emp_1 = extract_employee_id(p1) or extract_employee_id(all_text)
+    emp_2 = extract_employee_id(p2) or extract_employee_id(all_text)
+
+    if not emp_1:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **salarié** illisible (je ne peux pas vérifier que c'est le même).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
+        )
+
+    if emp_2 and emp_2 != emp_1:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **salarié différent** entre les pages.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
+        )
+
+    last_token = emp_1.split()[0] if emp_1 else ""
+    if last_token and (last_token.lower() not in (p2 or "").lower()) and (emp_2 is None):
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais je ne retrouve pas le **même salarié** sur la page 2.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2], "period_ref": period_ref},
+        )
+
+    return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": emp_1, "period_ref": period_ref}
 
 # ------------------------------------------------------------
 # UI
@@ -493,25 +634,6 @@ def dedouble_digits_if_all_pairs(token: str) -> str:
         out.append(token[i])
     return "".join(out)
 
-
-def normalize_doubled_digits_in_dates(text: str) -> str:
-    """
-    Corrige surtout les dates/années quand les chiffres sont doublés.
-    Ex: 0011//1122//22002255 -> 01/12/2025
-    """
-    t = text
-
-    def repl_date(m):
-        a = dedouble_digits_if_all_pairs(m.group(1))
-        b = dedouble_digits_if_all_pairs(m.group(2))
-        c = dedouble_digits_if_all_pairs(m.group(3))
-        return f"{a}/{b}/{c}"
-
-    t = re.sub(r"\b(\d{2,4})[\/\-]{1,2}(\d{2,4})[\/\-]{1,2}(\d{4,8})\b", repl_date, t)
-    t = re.sub(r"\b\d{8}\b", lambda m: dedouble_digits_if_all_pairs(m.group(0)), t)
-    return t
-
-
 def to_float_fr(s: str):
     if s is None:
         return None
@@ -564,9 +686,14 @@ def eur(v):
 
 
 # ------------------------------------------------------------
+# ------------------------------------------------------------
+# UI upload
+# ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
 DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+
+
 # ------------------------------------------------------------
 # MODE PRECHECK : validation + stockage R2 AVANT paiement
 # ------------------------------------------------------------
@@ -608,7 +735,9 @@ if MODE == "precheck":
         pay_url = add_query_params(PAYMENT_LINK, {"client_reference_id": precheck_id})
         st.link_button("Payer 7,50 €", pay_url, type="primary")
         st.caption("Après paiement, Stripe te renvoie vers l’app (success_url) avec session_id.")
+
     st.stop()
+
 
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
@@ -1666,6 +1795,7 @@ def build_pdf(fields, comments, fmt_name):
 # ------------------------------------------------------------
 # ------------------------------------------------------------
 
+# ------------------------------------------------------------
 # MODE FINAL : après paiement, récupérer le PDF depuis R2 (sans re-upload)
 # ------------------------------------------------------------
 stored_pdf_bytes = None
@@ -1675,61 +1805,82 @@ if MODE != "precheck" and paid_ok and client_ref:
         st.warning(f"Paiement OK mais fichier introuvable dans R2 ({r2_reason}).")
         st.info("➡️ Fallback : re-uploade ton PDF ci-dessous.")
 
+
 if (stored_pdf_bytes is not None) or (uploaded is not None):
     st.success("PDF reçu ✅")
 
-    # Streamlit relance le script à chaque interaction.
-    # Un bouton explicite évite les "PDF reçu mais rien après".
-    
-if st.button("Analyser le bulletin", type="primary"):
+    if st.button("Analyser le bulletin", type="primary"):
+        import time
+        t0 = time.time()
 
-    _sid = _get_session_id_for_credit()
-if not _sid:
-        st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
-        st.stop()
+        status = st.status("Démarrage de l'analyse…", expanded=True)
+        status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
 
-if credit_is_consumed(_sid):
-        st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
-        st.stop()
+        # ✅ Choix de la source du PDF (DANS le bouton)
+        if stored_pdf_bytes is not None:
+            file_obj = io.BytesIO(stored_pdf_bytes)
+        else:
+            file_obj = io.BytesIO(uploaded.getvalue())
 
-if not credit_consume(_sid):
-        st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
-        st.stop()
+        # ✅ Extraction
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+            file_obj, dpi=DPI, force_ocr=OCR_FORCE
+        )
+        status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
-        st.session_state.analysis_credit_used_for = _sid
-    
-import time
-t0 = time.time()
+        # ✅ Vérif bulletin
+        status.write("2/6 Vérification du document…")
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            status.update(label="Analyse interrompue", state="error")
+            st.error(msg_doc)
+            if DEBUG:
+                st.json(doc_dbg)
+            st.stop()
 
-status = st.status("Démarrage de l'analyse…", expanded=True)
-status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+        # ✅ Format
+        fmt, fmt_dbg = detect_format(text)
+        status.write(f"✅ Document valide — format détecté: {fmt}")
+        status.write("3/6 Extraction des champs principaux…")
 
-    # ✅ Choix de la source du PDF (DOIT être dans le bouton)
-if stored_pdf_bytes is not None:
-        file_obj = io.BytesIO(stored_pdf_bytes)
-    else:
-        file_obj = io.BytesIO(uploaded.getvalue())
-
-    # ✅ Extraction (commune)
-    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-        file_obj, dpi=DPI, force_ocr=OCR_FORCE
-    )
-    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
-
-    status.write("2/6 Vérification du document…")
-    ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-if not ok_doc:
-        status.update(label="Analyse interrompue", state="error")
-        st.error(msg_doc)
+        # DEBUG: uniquement affichage (PAS l'analyse)
         if DEBUG:
-            st.json(doc_dbg)
-        st.stop()
+            st.write(f"Format détecté : **{fmt}**")
+            st.json({"ocr": used_ocr, **fmt_dbg})
+            with st.expander("Texte extrait (début)"):
+                st.text((text or "")[:12000])
 
-    fmt, fmt_dbg = detect_format(text)
-    status.write(f"✅ Document valide — format détecté: {fmt}")
-    status.write("3/6 Extraction des champs principaux…")
+        # ---- ICI : ton extraction métier (period/brut/net/pas/charges/cp/etc.) ----
+        # IMPORTANT : CE CODE DOIT RESTER DANS CE BOUTON (indenté pareil)
 
-    # ... (le reste de ton analyse continue ici, toujours indenté pareil)
+        # Exemple minimal (tu remets ton gros bloc après)
+        period, period_line = extract_period(text)
+
+        brut, brut_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+            exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+        )
+
+        net_paye, net_paye_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+            exclude_patterns=[r"avant\s+imp", r"imposable"],
+        )
+
+        pas, pas_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu", r"pr[ée]l[èe]vement\s+à\s+la\s+source", r"\bpas\b"],
+            exclude_patterns=[r"csg", r"crds", r"deduct", r"non\s+deduct"],
+        )
+
+        # ... ensuite tu continues EXACTEMENT ton gros bloc (QUADRA/SILAE + PDF)
+        # status.write("4/6 ...")
+        # status.write("5/6 ...")
+        # status.write("6/6 ...")
+        # st.download_button(...)
+else:
+    st.info("En attente d'un PDF…")
 
 
     if DEBUG:
