@@ -191,10 +191,6 @@ def is_payment_ok() -> tuple[bool, str, str | None]:
         return bool(paid), ("paid" if paid else "not_paid"), client_ref
     except Exception as e:
         return False, f"stripe_error:{type(e).__name__}", None
-
-
-paid_ok, paid_reason, client_ref = is_payment_ok()
-
 def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
     """
     Règles demandées :
@@ -282,7 +278,8 @@ def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
         )
 
     return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": emp_1, "period_ref": period_ref}
-
+    
+paid_ok, paid_reason, client_ref = is_payment_ok()
 if (MODE != "precheck") and (not paid_ok):
     st.markdown("## Vérification — 7,50 €")
     st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
@@ -294,6 +291,7 @@ if (MODE != "precheck") and (not paid_ok):
     if DEBUG:
         st.info(f"[debug] accès refusé: {paid_reason}")
     st.stop()
+
 
 # ------------------------------------------------------------
 # Crédit d'analyse : 1 paiement = 1 analyse
@@ -1682,123 +1680,110 @@ if (stored_pdf_bytes is not None) or (uploaded is not None):
 
     # Streamlit relance le script à chaque interaction.
     # Un bouton explicite évite les "PDF reçu mais rien après".
+    
     if st.button("Analyser le bulletin", type="primary"):
 
-        # ------------------------------------------------------------
+    _sid = _get_session_id_for_credit()
+    if not _sid:
+        st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
+        st.stop()
 
-        # Anti-rejeu : 1 paiement = 1 analyse (consommation au démarrage)
+    if credit_is_consumed(_sid):
+        st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
+        st.stop()
 
-        # ------------------------------------------------------------
+    if not credit_consume(_sid):
+        st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
+        st.stop()
 
-        _sid = _get_session_id_for_credit()
+    st.session_state.analysis_credit_used_for = _sid
 
-        if not _sid:
-            st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
-            st.stop()
+    import time
+    t0 = time.time()
 
-        # Sécurité : on vérifie / consomme côté serveur (SQLite). Empêche le bypass au refresh.
-        if credit_is_consumed(_sid):
-            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
-            st.stop()
+    status = st.status("Démarrage de l'analyse…", expanded=True)
+    status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
 
-        # On consomme le crédit AVANT de lancer le travail lourd.
-        if not credit_consume(_sid):
-            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
-            st.stop()
+    # ✅ Choix de la source du PDF (DOIT être dans le bouton)
+    if stored_pdf_bytes is not None:
+        file_obj = io.BytesIO(stored_pdf_bytes)
+    else:
+        file_obj = io.BytesIO(uploaded.getvalue())
 
-        # UI only
-        st.session_state.analysis_credit_used_for = _sid
+    # ✅ Extraction (commune)
+    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+        file_obj, dpi=DPI, force_ocr=OCR_FORCE
+    )
+    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
-        import time
+    status.write("2/6 Vérification du document…")
+    ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+    if not ok_doc:
+        status.update(label="Analyse interrompue", state="error")
+        st.error(msg_doc)
+        if DEBUG:
+            st.json(doc_dbg)
+        st.stop()
 
-        t0 = time.time()
+    fmt, fmt_dbg = detect_format(text)
+    status.write(f"✅ Document valide — format détecté: {fmt}")
+    status.write("3/6 Extraction des champs principaux…")
 
-        status = st.status("Démarrage de l'analyse…", expanded=True)
-
-        status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+    # ... (le reste de ton analyse continue ici, toujours indenté pareil)
 
 
-        # Crédit consommé ✅
-        # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
-        # Choix de la source du PDF
-if stored_pdf_bytes is not None:
-    file_obj = io.BytesIO(stored_pdf_bytes)
-else:
-    file_obj = io.BytesIO(uploaded.getvalue())
-
-# Extraction (COMMUNE aux deux cas)
-text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-    file_obj, dpi=DPI, force_ocr=OCR_FORCE
-)
-status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
-
-status.write("2/6 Vérification du document…")
-ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-
-if not ok_doc:
-    status.update(label="Analyse interrompue", state="error")
-    st.error(msg_doc)
     if DEBUG:
-        st.json(doc_dbg)
-    st.stop()
+        st.write(f"Format détecté : **{fmt}**")
+        st.json({"ocr": used_ocr, **fmt_dbg})
+        with st.expander("Texte extrait (début)"):
+            st.text((text or "")[:12000])
 
-fmt, fmt_dbg = detect_format(text)
+    # Variables communes (PAS dans DEBUG, sinon ça ne tourne qu’en debug)
+    period, period_line = extract_period(text)
 
-status.write(f"✅ Document valide — format détecté: {fmt}")
-status.write("3/6 Extraction des champs principaux…")
+    brut, brut_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+        exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+    )
 
-if DEBUG:
-    st.write(f"Format détecté : **{fmt}**")
-    st.json({"ocr": used_ocr, **fmt_dbg})
-    with st.expander("Texte extrait (début)"):
-        st.text((text or "")[:12000])
+    net_paye, net_paye_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+        exclude_patterns=[r"avant\s+imp", r"imposable"],
+    )
 
-        # Variables communes
-        period, period_line = extract_period(text)
+    pas, pas_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu", r"pr[ée]l[èe]vement\s+à\s+la\s+source", r"\bpas\b"],
+        exclude_patterns=[r"csg", r"crds", r"deduct", r"non\s+deduct"],
+    )
 
-        brut, brut_line = find_last_line_with_amount(
+    # CSG non déductible : sur QUADRA elle peut être sur plusieurs lignes => on additionne
+    if fmt == "QUADRA":
+        csg_nd, csg_nd_line = extract_csg_non_deductible_total(text)
+    else:
+        csg_nd, csg_nd_line = find_last_line_with_amount(
             text,
-            include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
-            exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+            include_patterns=[r"csg.*non\s+d[ée]duct", r"csg\/crds.*non\s+d[ée]duct", r"non\s+d[ée]duct.*imp[oô]t"],
+            exclude_patterns=[],
         )
 
-        net_paye, net_paye_line = find_last_line_with_amount(
-            text,
-            include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
-            exclude_patterns=[r"avant\s+imp", r"imposable"],
-        )
+    # Acompte + net reconstitué
+    acompte, acompte_line = extract_acompte(text, net_paye=net_paye, brut=brut)
+    net_reference = round(net_paye + (acompte or 0.0), 2) if net_paye is not None else None
 
-        pas, pas_line = find_last_line_with_amount(
-            text,
-            include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu", r"pr[ée]l[èe]vement\s+à\s+la\s+source", r"\bpas\b"],
-            exclude_patterns=[r"csg", r"crds", r"deduct", r"non\s+deduct"],
-        )
+    # Init
+    charges_sal = None
+    charges_pat = None
+    charges_line = None
+    charges_method = None
+    cout_total = None
+    cout_total_line = None
+    cp = {"cp_n1": None, "cp_n": None, "cp_total": None}
 
-            # CSG non déductible : sur QUADRA elle peut être sur plusieurs lignes => on additionne
-        if fmt == "QUADRA":
-            csg_nd, csg_nd_line = extract_csg_non_deductible_total(text)
-        else:
-            csg_nd, csg_nd_line = find_last_line_with_amount(
-                text,
-                include_patterns=[r"csg.*non\s+d[ée]duct", r"csg\/crds.*non\s+d[ée]duct", r"non\s+d[ée]duct.*imp[oô]t"],
-                exclude_patterns=[],
-            )
+    status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
 
-        # Acompte + net reconstitué (anti-acompte délirant)
-        acompte, acompte_line = extract_acompte(text, net_paye=net_paye, brut=brut)
-        net_reference = round(net_paye + (acompte or 0.0), 2) if net_paye is not None else None
-
-        # Init
-        charges_sal = None
-        charges_pat = None
-        charges_line = None
-        charges_method = None
-        cout_total = None
-        cout_total_line = None
-        cp = {"cp_n1": None, "cp_n": None, "cp_total": None}
-
-
-        status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
 
         # Extraction par format
         if fmt == "QUADRA":
