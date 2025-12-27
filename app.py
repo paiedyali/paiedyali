@@ -390,63 +390,6 @@ _sid = _get_session_id_for_credit()
 if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.session_state.analysis_credit_used_for != _sid):
     st.session_state.analysis_credit_used_for = None
 # Options d'analyse (après paiement)
-# ------------------------------------------------------------
-OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
-DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
-# ------------------------------------------------------------
-# MODE PRECHECK : validation + stockage R2 AVANT paiement
-# ------------------------------------------------------------
-if MODE == "precheck":
-    st.info("🧪 Pré-vérification : on teste ton bulletin avant paiement.")
-
-    if uploaded is None:
-        st.stop()
-
-    if st.button("Vérifier et continuer", type="primary"):
-        pdf_bytes = uploaded.getvalue()
-        file_obj = io.BytesIO(pdf_bytes)
-
-        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-            file_obj, dpi=DPI, force_ocr=OCR_FORCE
-        )
-
-        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-        if not ok_doc:
-            st.error(msg_doc)
-            if DEBUG:
-                st.json(doc_dbg)
-            st.stop()
-
-        fmt, _ = detect_format(text)
-        st.success(f"✅ Bulletin compatible — format détecté : {fmt}")
-
-        precheck_id = str(uuid.uuid4())
-
-        ok_store, store_info = r2_put_pdf(pdf_bytes, precheck_id)
-        if not ok_store:
-            st.error(f"Stockage temporaire impossible ({store_info}).")
-            st.stop()
-
-        if not PAYMENT_LINK:
-            st.error("STRIPE_PAYMENT_LINK manquant.")
-            st.stop()
-
-        pay_url = add_query_params(PAYMENT_LINK, {"client_reference_id": precheck_id})
-        st.link_button("Payer 7,50 €", pay_url, type="primary")
-        st.caption("Après paiement, Stripe te renvoie vers l’app (success_url) avec session_id.")
-    st.stop()
-
-
-# Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
-# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
-
-
-# ------------------------------------------------------------
-# Nettoyage + montants
-# ------------------------------------------------------------
-
-
 def dedouble_digits_if_all_pairs(token: str) -> str:
     """
     Dédouble un token uniquement si :
@@ -531,6 +474,64 @@ def eur(v):
         return "-"
     s = f"{v:,.2f}".replace(",", " ").replace(".", ",")
     return f"{s} EUR"
+
+
+# ------------------------------------------------------------
+OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
+DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+# ------------------------------------------------------------
+# MODE PRECHECK : validation + stockage R2 AVANT paiement
+# ------------------------------------------------------------
+if MODE == "precheck":
+    st.info("🧪 Pré-vérification : on teste ton bulletin avant paiement.")
+
+    if uploaded is None:
+        st.stop()
+
+    if st.button("Vérifier et continuer", type="primary"):
+        pdf_bytes = uploaded.getvalue()
+        file_obj = io.BytesIO(pdf_bytes)
+
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+            file_obj, dpi=DPI, force_ocr=OCR_FORCE
+        )
+
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            st.error(msg_doc)
+            if DEBUG:
+                st.json(doc_dbg)
+            st.stop()
+
+        fmt, _ = detect_format(text)
+        st.success(f"✅ Bulletin compatible — format détecté : {fmt}")
+
+        precheck_id = str(uuid.uuid4())
+
+        ok_store, store_info = r2_put_pdf(pdf_bytes, precheck_id)
+        if not ok_store:
+            st.error(f"Stockage temporaire impossible ({store_info}).")
+            st.stop()
+
+        if not PAYMENT_LINK:
+            st.error("STRIPE_PAYMENT_LINK manquant.")
+            st.stop()
+
+        pay_url = add_query_params(PAYMENT_LINK, {"client_reference_id": precheck_id})
+        st.link_button("Payer 7,50 €", pay_url, type="primary")
+        st.caption("Après paiement, Stripe te renvoie vers l’app (success_url) avec session_id.")
+    st.stop()
+
+
+# Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
+# pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
+
+# ------------------------------------------------------------
+# Nettoyage + montants
+# ------------------------------------------------------------
+
 
 
 
