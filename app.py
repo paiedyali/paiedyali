@@ -1701,8 +1701,8 @@ if not credit_consume(_sid):
 import time
 t0 = time.time()
 
-    status = st.status("Démarrage de l'analyse…", expanded=True)
-    status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+status = st.status("Démarrage de l'analyse…", expanded=True)
+status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
 
     # ✅ Choix de la source du PDF (DOIT être dans le bouton)
 if stored_pdf_bytes is not None:
