@@ -194,6 +194,95 @@ def is_payment_ok() -> tuple[bool, str, str | None]:
 
 
 paid_ok, paid_reason, client_ref = is_payment_ok()
+
+def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
+    """
+    Règles demandées :
+    - Bloquer tout document qui n'est pas un bulletin de salaire
+    - Bloquer un PDF multi-pages, SAUF si c'est un bulletin (même salarié, même période) sur 2 pages
+    """
+    n = len(page_texts or [])
+    all_text = "\n".join(page_texts or [])
+
+    # 1) bulletin de salaire ?
+    ok_ps, dbg_ps = is_likely_payslip(all_text)
+    fmt, fmt_dbg = detect_format(all_text)
+
+    if (not ok_ps) or (fmt == "INCONNU"):
+        return (
+            False,
+            "🔒 Document refusé : ce PDF ne ressemble pas à un **bulletin de salaire** (ou format non reconnu).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
+        )
+
+    # 2) pages autorisées
+    if n <= 1:
+        return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n}
+
+    if n > 2:
+        return (
+            False,
+            "🔒 Document refusé : PDF **multi-pages** (>2) non accepté. Dépose uniquement le bulletin concerné.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
+        )
+
+    # 3) cas 2 pages : même salarié + même période
+    p1, p2 = page_texts[0], page_texts[1]
+
+    period_all, _ = extract_period(all_text)
+    period_1, _ = extract_period(p1)
+    period_2, _ = extract_period(p2)
+
+    # comparaison robuste (mois+année) pour éviter les faux refus dus à des libellés différents
+    period_ref = period_1 or period_all
+    key_ref = period_key(period_ref)
+    key_p2 = period_key(period_2)
+
+    if not key_ref:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **période** illisible (je ne peux pas vérifier que c'est la même).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "periods": [period_1, period_2, period_all], "period_keys": [key_ref, key_p2]},
+        )
+
+    # Si la page 2 n'a pas de période, on accepte (beaucoup de bulletins n'affichent la période que sur la page 1).
+    if key_p2 and (key_p2 != key_ref):
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **période différente** entre les pages.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "periods": [period_1, period_2, period_all], "period_keys": [key_ref, key_p2]},
+        )
+
+    emp_1 = extract_employee_id(p1) or extract_employee_id(all_text)
+    emp_2 = extract_employee_id(p2) or extract_employee_id(all_text)
+
+    if not emp_1:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **salarié** illisible (je ne peux pas vérifier que c'est le même).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
+        )
+
+    # sur la 2e page, le nom n'est pas toujours 'labellisé' => vérif souple :
+    # - soit extraction OK et identique
+    # - soit le NOM (token principal) apparaît dans le texte de la page 2
+    if emp_2 and emp_2 != emp_1:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **salarié différent** entre les pages.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
+        )
+
+    last_token = emp_1.split()[0] if emp_1 else ""
+    if last_token and (last_token.lower() not in (p2 or "").lower()) and (emp_2 is None):
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais je ne retrouve pas le **même salarié** sur la page 2.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2], "period_ref": period_ref},
+        )
+
+    return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": emp_1, "period_ref": period_ref}
+
 if (MODE != "precheck") and (not paid_ok):
     st.markdown("## Vérification — 7,50 €")
     st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
@@ -637,93 +726,6 @@ def extract_employee_id(text: str):
 
 
 
-def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
-    """
-    Règles demandées :
-    - Bloquer tout document qui n'est pas un bulletin de salaire
-    - Bloquer un PDF multi-pages, SAUF si c'est un bulletin (même salarié, même période) sur 2 pages
-    """
-    n = len(page_texts or [])
-    all_text = "\n".join(page_texts or [])
-
-    # 1) bulletin de salaire ?
-    ok_ps, dbg_ps = is_likely_payslip(all_text)
-    fmt, fmt_dbg = detect_format(all_text)
-
-    if (not ok_ps) or (fmt == "INCONNU"):
-        return (
-            False,
-            "🔒 Document refusé : ce PDF ne ressemble pas à un **bulletin de salaire** (ou format non reconnu).",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
-        )
-
-    # 2) pages autorisées
-    if n <= 1:
-        return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n}
-
-    if n > 2:
-        return (
-            False,
-            "🔒 Document refusé : PDF **multi-pages** (>2) non accepté. Dépose uniquement le bulletin concerné.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
-        )
-
-    # 3) cas 2 pages : même salarié + même période
-    p1, p2 = page_texts[0], page_texts[1]
-
-    period_all, _ = extract_period(all_text)
-    period_1, _ = extract_period(p1)
-    period_2, _ = extract_period(p2)
-
-    # comparaison robuste (mois+année) pour éviter les faux refus dus à des libellés différents
-    period_ref = period_1 or period_all
-    key_ref = period_key(period_ref)
-    key_p2 = period_key(period_2)
-
-    if not key_ref:
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **période** illisible (je ne peux pas vérifier que c'est la même).",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "periods": [period_1, period_2, period_all], "period_keys": [key_ref, key_p2]},
-        )
-
-    # Si la page 2 n'a pas de période, on accepte (beaucoup de bulletins n'affichent la période que sur la page 1).
-    if key_p2 and (key_p2 != key_ref):
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **période différente** entre les pages.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "periods": [period_1, period_2, period_all], "period_keys": [key_ref, key_p2]},
-        )
-
-    emp_1 = extract_employee_id(p1) or extract_employee_id(all_text)
-    emp_2 = extract_employee_id(p2) or extract_employee_id(all_text)
-
-    if not emp_1:
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **salarié** illisible (je ne peux pas vérifier que c'est le même).",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
-        )
-
-    # sur la 2e page, le nom n'est pas toujours 'labellisé' => vérif souple :
-    # - soit extraction OK et identique
-    # - soit le NOM (token principal) apparaît dans le texte de la page 2
-    if emp_2 and emp_2 != emp_1:
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **salarié différent** entre les pages.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
-        )
-
-    last_token = emp_1.split()[0] if emp_1 else ""
-    if last_token and (last_token.lower() not in (p2 or "").lower()) and (emp_2 is None):
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais je ne retrouve pas le **même salarié** sur la page 2.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2], "period_ref": period_ref},
-        )
-
-    return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": emp_1, "period_ref": period_ref}
 
 
 # ------------------------------------------------------------
