@@ -268,7 +268,41 @@ def credit_consume(session_id: str) -> bool:
         return True
     except sqlite3.IntegrityError:
         return False
+        
+def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
+    """
+    Version 'par page' de l'extraction :
+    - texte PDF classique par page
+    - OCR seulement si page quasi vide (ou force_ocr)
+    Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
+    """
+    file.seek(0)
+    images = pdf_to_page_images(file, dpi=dpi)
 
+    page_texts = []
+    page_ocr = []
+    file.seek(0)
+    with pdfplumber.open(file) as pdf:
+        for i, p in enumerate(pdf.pages):
+            t = p.extract_text() or ""
+            t = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(t)))
+            page_texts.append(t)
+            page_ocr.append(False)
+
+    # OCR page par page si besoin
+    for i, t in enumerate(page_texts):
+        if force_ocr or len(t) < 40:
+            try:
+                ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
+            except Exception:
+                ocr_t = ""
+            if len(ocr_t) > len(t):
+                page_texts[i] = ocr_t
+            page_ocr[i] = True
+
+    all_text = "\n".join(page_texts).strip()
+    used_ocr_any = any(page_ocr)
+    return all_text, used_ocr_any, images, page_texts, page_ocr
 
 # Conserve un petit état côté session pour l'UI (non-sécurité).
 if "analysis_credit_used_for" not in st.session_state:
@@ -583,40 +617,7 @@ def extract_employee_id(text: str):
 
     return None
 
-def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
-    """
-    Version 'par page' de l'extraction :
-    - texte PDF classique par page
-    - OCR seulement si page quasi vide (ou force_ocr)
-    Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
-    """
-    file.seek(0)
-    images = pdf_to_page_images(file, dpi=dpi)
 
-    page_texts = []
-    page_ocr = []
-    file.seek(0)
-    with pdfplumber.open(file) as pdf:
-        for i, p in enumerate(pdf.pages):
-            t = p.extract_text() or ""
-            t = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(t)))
-            page_texts.append(t)
-            page_ocr.append(False)
-
-    # OCR page par page si besoin
-    for i, t in enumerate(page_texts):
-        if force_ocr or len(t) < 40:
-            try:
-                ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
-            except Exception:
-                ocr_t = ""
-            if len(ocr_t) > len(t):
-                page_texts[i] = ocr_t
-            page_ocr[i] = True
-
-    all_text = "\n".join(page_texts).strip()
-    used_ocr_any = any(page_ocr)
-    return all_text, used_ocr_any, images, page_texts, page_ocr
 
 def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
     """
