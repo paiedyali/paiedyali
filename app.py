@@ -1697,8 +1697,8 @@ if not credit_consume(_sid):
         st.stop()
 
         st.session_state.analysis_credit_used_for = _sid
-
-    import time
+    
+import time
     t0 = time.time()
 
     status = st.status("Démarrage de l'analyse…", expanded=True)
