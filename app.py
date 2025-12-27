@@ -15,6 +15,9 @@ import streamlit as st
 import pdfplumber
 import pytesseract
 from pytesseract import Output
+import uuid
+from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
+import boto3
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
@@ -73,6 +76,72 @@ DEBUG = st.checkbox("Mode debug", value=False)
 PRICE_EUR = 7.50
 PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "").strip()  # ex: https://buy.stripe.com/...
 ALLOW_NO_PAYMENT = os.getenv("ALLOW_NO_PAYMENT", "false").lower() == "true"
+# ------------------------------------------------------------
+# Stockage Cloudflare R2 (S3-compatible) — PDF temporaire
+# ------------------------------------------------------------
+def _r2_client():
+    endpoint = os.getenv("R2_ENDPOINT_URL", "").strip()
+    key_id = os.getenv("R2_ACCESS_KEY_ID", "").strip()
+    secret = os.getenv("R2_SECRET_ACCESS_KEY", "").strip()
+    if not endpoint or not key_id or not secret:
+        return None, "missing_R2_env"
+
+    try:
+        s3 = boto3.client(
+            "s3",
+            endpoint_url=endpoint,
+            aws_access_key_id=key_id,
+            aws_secret_access_key=secret,
+            region_name="auto",
+        )
+        return s3, "ok"
+    except Exception as e:
+        return None, f"r2_client_error:{type(e).__name__}"
+
+def _r2_bucket():
+    return os.getenv("R2_BUCKET", "").strip()
+
+def r2_put_pdf(pdf_bytes: bytes, precheck_id: str) -> tuple[bool, str]:
+    s3, reason = _r2_client()
+    if not s3:
+        return False, reason
+    bucket = _r2_bucket()
+    if not bucket:
+        return False, "missing_R2_BUCKET"
+
+    key = f"prechecks/{precheck_id}.pdf"
+    try:
+        s3.put_object(
+            Bucket=bucket,
+            Key=key,
+            Body=pdf_bytes,
+            ContentType="application/pdf",
+        )
+        return True, key
+    except Exception as e:
+        return False, f"r2_put_error:{type(e).__name__}"
+
+def r2_get_pdf(precheck_id: str) -> tuple[bytes | None, str]:
+    s3, reason = _r2_client()
+    if not s3:
+        return None, reason
+    bucket = _r2_bucket()
+    if not bucket:
+        return None, "missing_R2_BUCKET"
+
+    key = f"prechecks/{precheck_id}.pdf"
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        return obj["Body"].read(), "ok"
+    except Exception as e:
+        return None, f"r2_get_error:{type(e).__name__}"
+
+def add_query_params(url: str, params: dict) -> str:
+    u = urlparse(url)
+    q = dict(parse_qsl(u.query, keep_blank_values=True))
+    q.update({k: str(v) for k, v in params.items() if v is not None})
+    return urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(q), u.fragment))
+
 
 # ------------------------------------------------------------
 # OPTION (recommandé en prod) : Webhook Stripe (anti-fraude 'béton')
@@ -98,27 +167,34 @@ def _get_query_param(name: str):
     if isinstance(v, list):
         return v[0] if v else None
     return v
+MODE = (_get_query_param("mode") or "final").lower()  # precheck | final
 
-def is_payment_ok() -> tuple[bool, str]:
+
+def is_payment_ok() -> tuple[bool, str, str | None]:
     if ALLOW_NO_PAYMENT:
-        return True, "bypass"
+        return True, "bypass", None
+
     session_id = _get_query_param("session_id") or _get_query_param("checkout_session_id")
     if not session_id:
-        return False, "missing_session_id"
+        return False, "missing_session_id", None
+
     secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
     if not secret_key:
-        return False, "missing_STRIPE_SECRET_KEY"
+        return False, "missing_STRIPE_SECRET_KEY", None
+
     try:
         import stripe  # lazy import
         stripe.api_key = secret_key
         s = stripe.checkout.Session.retrieve(session_id)
         paid = (getattr(s, "payment_status", None) == "paid") and (getattr(s, "status", None) in ("complete", "paid", None))
-        return bool(paid), "paid" if paid else "not_paid"
+        client_ref = getattr(s, "client_reference_id", None)
+        return bool(paid), ("paid" if paid else "not_paid"), client_ref
     except Exception as e:
-        return False, f"stripe_error:{type(e).__name__}"
+        return False, f"stripe_error:{type(e).__name__}", None
 
-paid_ok, paid_reason = is_payment_ok()
-if not paid_ok:
+
+paid_ok, paid_reason, client_ref = is_payment_ok()
+if (MODE != "precheck") and (not paid_ok):
     st.markdown("## Vérification — 7,50 €")
     st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
     if PAYMENT_LINK:
@@ -207,6 +283,49 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
 DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+# ------------------------------------------------------------
+# MODE PRECHECK : validation + stockage R2 AVANT paiement
+# ------------------------------------------------------------
+if MODE == "precheck":
+    st.info("🧪 Pré-vérification : on teste ton bulletin avant paiement.")
+
+    if uploaded is None:
+        st.stop()
+
+    if st.button("Vérifier et continuer", type="primary"):
+        pdf_bytes = uploaded.getvalue()
+        file_obj = io.BytesIO(pdf_bytes)
+
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+            file_obj, dpi=DPI, force_ocr=OCR_FORCE
+        )
+
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            st.error(msg_doc)
+            if DEBUG:
+                st.json(doc_dbg)
+            st.stop()
+
+        fmt, _ = detect_format(text)
+        st.success(f"✅ Bulletin compatible — format détecté : {fmt}")
+
+        precheck_id = str(uuid.uuid4())
+
+        ok_store, store_info = r2_put_pdf(pdf_bytes, precheck_id)
+        if not ok_store:
+            st.error(f"Stockage temporaire impossible ({store_info}).")
+            st.stop()
+
+        if not PAYMENT_LINK:
+            st.error("STRIPE_PAYMENT_LINK manquant.")
+            st.stop()
+
+        pay_url = add_query_params(PAYMENT_LINK, {"client_reference_id": precheck_id})
+        st.link_button("Payer 7,50 €", pay_url, type="primary")
+        st.caption("Après paiement, Stripe te renvoie vers l’app (success_url) avec session_id.")
+    st.stop()
+
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
 # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -1526,7 +1645,18 @@ def build_pdf(fields, comments, fmt_name):
 # ------------------------------------------------------------
 # MAIN
 # ------------------------------------------------------------
-if uploaded is not None:
+# ------------------------------------------------------------
+
+# MODE FINAL : après paiement, récupérer le PDF depuis R2 (sans re-upload)
+# ------------------------------------------------------------
+stored_pdf_bytes = None
+if MODE != "precheck" and paid_ok and client_ref:
+    stored_pdf_bytes, r2_reason = r2_get_pdf(client_ref)
+    if stored_pdf_bytes is None:
+        st.warning(f"Paiement OK mais fichier introuvable dans R2 ({r2_reason}).")
+        st.info("➡️ Fallback : re-uploade ton PDF ci-dessous.")
+
+if (stored_pdf_bytes is not None) or (uploaded is not None):
     st.success("PDF reçu ✅")
 
     # Streamlit relance le script à chaque interaction.
@@ -1569,10 +1699,16 @@ if uploaded is not None:
 
         # Crédit consommé ✅
         # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
-        file_obj = io.BytesIO(uploaded.getvalue())
-        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+        # Choix de la source du PDF
+if stored_pdf_bytes is not None:
+    file_obj = io.BytesIO(stored_pdf_bytes)
+else:
+    file_obj = io.BytesIO(uploaded.getvalue())
 
-
+# Extraction (COMMUNE aux deux cas)
+text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+    file_obj, dpi=DPI, force_ocr=OCR_FORCE
+)
         status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
         status.write("2/6 Vérification du document…")
