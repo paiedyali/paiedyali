@@ -52,6 +52,7 @@ def _get_query_param(name: str):
 
 MODE = (_get_query_param("mode") or "final").lower()  # precheck | final
 
+DEBUG = os.getenv("DEBUG", "false").lower() == "true"
 
 # ------------------------------------------------------------
 # Stripe check
@@ -103,130 +104,6 @@ if (MODE != "precheck") and (not paid_ok):
         st.info(f"[debug] accès refusé: {paid_reason}")
 
     st.stop()
-
-
-# ------------------------------------------------------------
-# Validation document : dépend de is_likely_payslip / detect_format / extract_period / period_key / extract_employee_id
-# => CES fonctions doivent être définies AVANT validate_uploaded_pdf.
-# ------------------------------------------------------------
-def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
-    n = len(page_texts or [])
-    all_text = "\n".join(page_texts or [])
-
-    ok_ps, dbg_ps = is_likely_payslip(all_text)
-    fmt, fmt_dbg = detect_format(all_text)
-
-    if (not ok_ps) or (fmt == "INCONNU"):
-        return (
-            False,
-            "🔒 Document refusé : ce PDF ne ressemble pas à un **bulletin de salaire** (ou format non reconnu).",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
-        )
-
-    if n <= 1:
-        return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n}
-
-    if n > 2:
-        return (
-            False,
-            "🔒 Document refusé : PDF **multi-pages** (>2) non accepté. Dépose uniquement le bulletin concerné.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
-        )
-
-    p1, p2 = page_texts[0], page_texts[1]
-
-    period_all, _ = extract_period(all_text)
-    period_1, _ = extract_period(p1)
-    period_2, _ = extract_period(p2)
-
-    period_ref = period_1 or period_all
-    key_ref = period_key(period_ref)
-    key_p2 = period_key(period_2)
-
-    if not key_ref:
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **période** illisible (je ne peux pas vérifier que c'est la même).",
-            {
-                "payslip_dbg": dbg_ps,
-                "fmt": fmt,
-                "fmt_dbg": fmt_dbg,
-                "pages": n,
-                "periods": [period_1, period_2, period_all],
-                "period_keys": [key_ref, key_p2],
-            },
-        )
-
-    if key_p2 and (key_p2 != key_ref):
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **période différente** entre les pages.",
-            {
-                "payslip_dbg": dbg_ps,
-                "fmt": fmt,
-                "fmt_dbg": fmt_dbg,
-                "pages": n,
-                "periods": [period_1, period_2, period_all],
-                "period_keys": [key_ref, key_p2],
-            },
-        )
-
-    emp_1 = extract_employee_id(p1) or extract_employee_id(all_text)
-    emp_2 = extract_employee_id(p2) or extract_employee_id(all_text)
-
-    if not emp_1:
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **salarié** illisible (je ne peux pas vérifier que c'est le même).",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
-        )
-
-    if emp_2 and emp_2 != emp_1:
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais **salarié différent** entre les pages.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
-        )
-
-    last_token = emp_1.split()[0] if emp_1 else ""
-    if last_token and (last_token.lower() not in (p2 or "").lower()) and (emp_2 is None):
-        return (
-            False,
-            "🔒 Document refusé : bulletin sur 2 pages mais je ne retrouve pas le **même salarié** sur la page 2.",
-            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2], "period_ref": period_ref},
-        )
-
-    return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": emp_1, "period_ref": period_ref}
-
-
-# ------------------------------------------------------------
-# UI
-# ------------------------------------------------------------
-st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
-st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
-st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
-
-st.markdown(
-    """
-<div style="
-    border: 2px solid #1f77b4;
-    border-radius: 12px;
-    padding: 12px 14px;
-    background: #eef6ff;
-    margin: 10px 0 16px 0;
-">
-  <div style="font-size: 18px; font-weight: 700;">🔒 Confidentialité</div>
-  <div style="margin-top:6px; font-size: 14px;">
-    • Ton PDF n'est <b>pas stocké</b> par l'application.<br/>
-    • Le traitement se fait <b>pendant l'analyse</b>, puis c'est terminé.<br/>
-    • Si le PDF est un scan (image), l'app bascule automatiquement en OCR.
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
-)
-
-DEBUG_UI = st.checkbox("Mode debug", value=False)
 
 
 # ------------------------------------------------------------
@@ -578,49 +455,6 @@ DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
 
 
-# ------------------------------------------------------------
-# MODE PRECHECK : validation + stockage R2 AVANT paiement
-# ------------------------------------------------------------
-if MODE == "precheck":
-    st.info("🧪 Pré-vérification : on teste ton bulletin avant paiement.")
-
-    if uploaded is None:
-        st.stop()
-
-    if st.button("Vérifier et continuer", type="primary"):
-        pdf_bytes = uploaded.getvalue()
-        file_obj = io.BytesIO(pdf_bytes)
-
-        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-            file_obj, dpi=DPI, force_ocr=OCR_FORCE
-        )
-
-        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-        if not ok_doc:
-            st.error(msg_doc)
-            if DEBUG_UI:
-                st.json(doc_dbg)
-            st.stop()
-
-        fmt, _ = detect_format(text)
-        st.success(f"✅ Bulletin compatible — format détecté : {fmt}")
-
-        precheck_id = str(uuid.uuid4())
-
-        ok_store, store_info = r2_put_pdf(pdf_bytes, precheck_id)
-        if not ok_store:
-            st.error(f"Stockage temporaire impossible ({store_info}).")
-            st.stop()
-
-        if not PAYMENT_LINK:
-            st.error("STRIPE_PAYMENT_LINK manquant.")
-            st.stop()
-
-        pay_url = add_query_params(PAYMENT_LINK, {"client_reference_id": precheck_id})
-        st.link_button("Payer 7,50 €", pay_url, type="primary")
-        st.caption("Après paiement, Stripe te renvoie vers l’app (success_url) avec session_id.")
-
-    st.stop()
 
 
 # ------------------------------------------------------------
@@ -722,6 +556,166 @@ def extract_period(text: str):
 
     return None, None
 
+def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
+    n = len(page_texts or [])
+    all_text = "\n".join(page_texts or [])
+
+    ok_ps, dbg_ps = is_likely_payslip(all_text)
+    fmt, fmt_dbg = detect_format(all_text)
+
+    if (not ok_ps) or (fmt == "INCONNU"):
+        return (
+            False,
+            "🔒 Document refusé : ce PDF ne ressemble pas à un **bulletin de salaire** (ou format non reconnu).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
+        )
+
+    if n <= 1:
+        return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n}
+
+    if n > 2:
+        return (
+            False,
+            "🔒 Document refusé : PDF **multi-pages** (>2) non accepté. Dépose uniquement le bulletin concerné.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n},
+        )
+
+    p1, p2 = page_texts[0], page_texts[1]
+
+    period_all, _ = extract_period(all_text)
+    period_1, _ = extract_period(p1)
+    period_2, _ = extract_period(p2)
+
+    period_ref = period_1 or period_all
+    key_ref = period_key(period_ref)
+    key_p2 = period_key(period_2)
+
+    if not key_ref:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **période** illisible (je ne peux pas vérifier que c'est la même).",
+            {
+                "payslip_dbg": dbg_ps,
+                "fmt": fmt,
+                "fmt_dbg": fmt_dbg,
+                "pages": n,
+                "periods": [period_1, period_2, period_all],
+                "period_keys": [key_ref, key_p2],
+            },
+        )
+
+    if key_p2 and (key_p2 != key_ref):
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **période différente** entre les pages.",
+            {
+                "payslip_dbg": dbg_ps,
+                "fmt": fmt,
+                "fmt_dbg": fmt_dbg,
+                "pages": n,
+                "periods": [period_1, period_2, period_all],
+                "period_keys": [key_ref, key_p2],
+            },
+        )
+
+    emp_1 = extract_employee_id(p1) or extract_employee_id(all_text)
+    emp_2 = extract_employee_id(p2) or extract_employee_id(all_text)
+
+    if not emp_1:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **salarié** illisible (je ne peux pas vérifier que c'est le même).",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
+        )
+
+    if emp_2 and emp_2 != emp_1:
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais **salarié différent** entre les pages.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2]},
+        )
+
+    last_token = emp_1.split()[0] if emp_1 else ""
+    if last_token and (last_token.lower() not in (p2 or "").lower()) and (emp_2 is None):
+        return (
+            False,
+            "🔒 Document refusé : bulletin sur 2 pages mais je ne retrouve pas le **même salarié** sur la page 2.",
+            {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": [emp_1, emp_2], "period_ref": period_ref},
+        )
+
+    return True, "OK", {"payslip_dbg": dbg_ps, "fmt": fmt, "fmt_dbg": fmt_dbg, "pages": n, "employee": emp_1, "period_ref": period_ref}
+# ------------------------------------------------------------
+# UI
+# ------------------------------------------------------------
+st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
+st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
+st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
+
+st.markdown(
+    """
+<div style="
+    border: 2px solid #1f77b4;
+    border-radius: 12px;
+    padding: 12px 14px;
+    background: #eef6ff;
+    margin: 10px 0 16px 0;
+">
+  <div style="font-size: 18px; font-weight: 700;">🔒 Confidentialité</div>
+  <div style="margin-top:6px; font-size: 14px;">
+    • Ton PDF n'est <b>pas stocké</b> par l'application.<br/>
+    • Le traitement se fait <b>pendant l'analyse</b>, puis c'est terminé.<br/>
+    • Si le PDF est un scan (image), l'app bascule automatiquement en OCR.
+  </div>
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+DEBUG = st.checkbox("Mode debug", value=DEBUG)
+
+# ------------------------------------------------------------
+# MODE PRECHECK : validation + stockage R2 AVANT paiement
+# ------------------------------------------------------------
+if MODE == "precheck":
+    st.info("🧪 Pré-vérification : on teste ton bulletin avant paiement.")
+
+    if uploaded is None:
+        st.stop()
+
+    if st.button("Vérifier et continuer", type="primary"):
+        pdf_bytes = uploaded.getvalue()
+        file_obj = io.BytesIO(pdf_bytes)
+
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+            file_obj, dpi=DPI, force_ocr=OCR_FORCE
+        )
+
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            st.error(msg_doc)
+            if DEBUG_UI:
+                st.json(doc_dbg)
+            st.stop()
+
+        fmt, _ = detect_format(text)
+        st.success(f"✅ Bulletin compatible — format détecté : {fmt}")
+
+        precheck_id = str(uuid.uuid4())
+
+        ok_store, store_info = r2_put_pdf(pdf_bytes, precheck_id)
+        if not ok_store:
+            st.error(f"Stockage temporaire impossible ({store_info}).")
+            st.stop()
+
+        if not PAYMENT_LINK:
+            st.error("STRIPE_PAYMENT_LINK manquant.")
+            st.stop()
+
+        pay_url = add_query_params(PAYMENT_LINK, {"client_reference_id": precheck_id})
+        st.link_button("Payer 7,50 €", pay_url, type="primary")
+        st.caption("Après paiement, Stripe te renvoie vers l’app (success_url) avec session_id.")
+
+    st.stop()
 
 # ------------------------------------------------------------
 # QUADRA — charges, acompte, total versé employeur, CP
