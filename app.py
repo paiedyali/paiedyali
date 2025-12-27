@@ -1709,7 +1709,7 @@ else:
 text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
     file_obj, dpi=DPI, force_ocr=OCR_FORCE
 )
-        status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
         status.write("2/6 Vérification du document…")
         ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
