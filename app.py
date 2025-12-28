@@ -41,18 +41,27 @@ from reportlab.pdfgen import canvas
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
+import streamlit as st
+import io
+import os
+
+# ------------------------------------------------------------
+# Configuration de la page
+# ------------------------------------------------------------
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
-# ------------------------------------------------------------
 
-# Bouton pour télécharger le fichier PDF
+# ------------------------------------------------------------
+# Paiement (Stripe ou autre) - Condition préalable pour l'analyse
+payment_status = st.radio("Statut du paiement", ("Non payé", "Payé"), index=0)
+
+# ------------------------------------------------------------
+# Bouton pour télécharger le fichier PDF (UN SEUL bouton)
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
 
-# Vérification du paiement avant l'analyse
-payment_status = st.radio("Status du paiement", ("Non payé", "Payé"), index=0)
-
-# Vérifie si un fichier a bien été téléchargé
+# ------------------------------------------------------------
+# Vérification si un fichier a bien été téléchargé
 if uploaded is not None:
     # L'analyse commence uniquement si le paiement est effectué
     if payment_status == "Payé":  # L'analyse commence uniquement si le paiement est effectué
@@ -123,7 +132,7 @@ if uploaded is not None:
 else:
     st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
 
-
+# Confidentialité - Message
 st.markdown(
     """
 <div style="
