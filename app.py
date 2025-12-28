@@ -49,10 +49,10 @@ st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour
 
 # ------------------------------------------------------------
 # Vérifie si un fichier a été téléchargé
-uploaded_1 = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_1")
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_1")
 
 # Vérification si un fichier a bien été téléchargé avant de l'utiliser
-if uploaded_1 is not None:
+if uploaded is not None:
     # Si un fichier est téléchargé, on continue avec l'analyse
     file_obj = io.BytesIO(uploaded.getvalue())
     st.success("Fichier reçu ✅")
@@ -232,7 +232,7 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
 # ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
 DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded_2 = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_2")
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_2")
 
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
