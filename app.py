@@ -1615,12 +1615,12 @@ if uploaded is not None:
                             st.stop()
 
                         # Sécurité : on vérifie / consomme côté serveur (SQLite). Empêche le bypass au refresh.
-                        if credit_is_consumed(_sid):
+            if credit_is_consumed(_sid):
                             st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
                             st.stop()
 
                         # On consomme le crédit AVANT de lancer le travail lourd.
-                        if not credit_consume(_sid):
+            if not credit_consume(_sid):
                             st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
                             st.stop()
 
