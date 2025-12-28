@@ -46,11 +46,11 @@ st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 # ------------------------------------------------------------
 # Composant pour télécharger le fichier PDF
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_1")
 
 # ------------------------------------------------------------
 # Vérifie si un fichier a été téléchargé
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_2")
 
 # Vérification si un fichier a bien été téléchargé avant de l'utiliser
 if uploaded is not None:
@@ -233,7 +233,8 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
 # ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
 DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_3")
+
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
 # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
