@@ -45,6 +45,9 @@ import streamlit as st
 import io
 import os
 
+import streamlit as st
+import io
+
 # ------------------------------------------------------------
 # Configuration de la page
 # ------------------------------------------------------------
@@ -63,7 +66,6 @@ uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"
 # ------------------------------------------------------------
 # Vérification si un fichier a bien été téléchargé
 if uploaded is not None:
-    # L'analyse commence uniquement si le paiement est effectué
     if payment_status == "Payé":  # L'analyse commence uniquement si le paiement est effectué
         try:
             # Si un fichier est téléchargé, on continue avec l'analyse
@@ -130,6 +132,7 @@ if uploaded is not None:
         # Si le paiement n'est pas effectué, afficher un message
         st.warning("🛑 Vous devez effectuer le paiement avant de commencer l'analyse.")
 else:
+    # Si aucun fichier n'est téléchargé, afficher un message d'instruction
     st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
 
 # Confidentialité - Message
@@ -154,6 +157,7 @@ st.markdown(
 )
 
 DEBUG = st.checkbox("Mode debug", value=False)
+
 
 # ------------------------------------------------------------
 # Paiement (Stripe) — mode SaaS 7,50 €
