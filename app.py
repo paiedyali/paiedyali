@@ -139,6 +139,7 @@ else:
     # Si aucun fichier n'est téléchargé, afficher un message d'instruction
     st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
 
+
 # Confidentialité - Message
 st.markdown(
     """
