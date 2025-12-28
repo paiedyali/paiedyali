@@ -52,7 +52,7 @@ st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour
 uploaded_1 = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_1")
 
 # Vérification si un fichier a bien été téléchargé avant de l'utiliser
-if uploaded is not None:
+if uploaded_1 is not None:
     # Si un fichier est téléchargé, on continue avec l'analyse
     file_obj = io.BytesIO(uploaded.getvalue())
     st.success("Fichier reçu ✅")
