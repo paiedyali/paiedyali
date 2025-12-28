@@ -46,24 +46,25 @@ st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 # ------------------------------------------------------------
 
+# Bouton pour télécharger le fichier PDF
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
 
-# ------------------------------------------------------------
-# Vérifie si un fichier a été téléchargé
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_1")
-
-# Vérification si un fichier a bien été téléchargé avant de l'utiliser
+# Vérifie si un fichier a bien été téléchargé avant d'essayer de l'utiliser
 if uploaded is not None:
-    # Si un fichier est téléchargé, on continue avec l'analyse
-    file_obj = io.BytesIO(uploaded.getvalue())
-    st.success("Fichier reçu ✅")
+    try:
+        # Si un fichier est téléchargé, on continue avec l'analyse
+        file_obj = io.BytesIO(uploaded.getvalue())
+        st.success("Fichier reçu ✅")
 
-    # Poursuite de la logique pour extraire le texte et analyser le PDF
-    status = st.status("Démarrage de l'analyse…", expanded=True)
+        # Poursuite de l'analyse, ici l'extraction du texte du PDF
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+        st.write("Texte extrait :")
+        st.write(text)
+    except Exception as e:
+        st.error(f"Une erreur est survenue lors du traitement du fichier : {e}")
+else:
+    st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
 
-    status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
-    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
-
-    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
     
     # Poursuite du processus d'analyse
     status.write("2/6 Vérification du document…")
