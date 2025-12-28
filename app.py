@@ -1610,7 +1610,7 @@ if uploaded is not None:
 
                 _sid = _get_session_id_for_credit()
 
-                        if not _sid:
+            if not _sid:
                             st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
                             st.stop()
 
