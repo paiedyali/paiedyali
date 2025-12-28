@@ -49,6 +49,10 @@ import streamlit as st
 import io
 
 # ------------------------------------------------------------
+import streamlit as st
+import io
+
+# ------------------------------------------------------------
 # Configuration de la page
 # ------------------------------------------------------------
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
@@ -157,6 +161,7 @@ st.markdown(
 )
 
 DEBUG = st.checkbox("Mode debug", value=False)
+
 
 
 # ------------------------------------------------------------
