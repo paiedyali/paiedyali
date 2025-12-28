@@ -4,13 +4,11 @@ import datetime as dt
 import os
 import uuid
 from urllib.parse import urlparse, parse_qsl, urlencode, urlunparse
-
 import streamlit as st
 import pdfplumber
 import pytesseract
 from pytesseract import Output
 import boto3
-
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.units import cm
 from reportlab.lib import colors
@@ -40,7 +38,6 @@ def _get_query_param(name: str):
     return v
 
 MODE = (_get_query_param("mode") or "final").lower()  # precheck | final
-
 # ------------------------------------------------------------
 # Stripe check
 # ------------------------------------------------------------
@@ -68,27 +65,6 @@ def is_payment_ok() -> tuple[bool, str, str | None]:
         return bool(paid), ("paid" if paid else "not_paid"), client_ref
     except Exception as e:
         return False, f"stripe_error:{type(e).__name__}", None
-
-# IMPORTANT : on calcule paid_ok AVANT de l'utiliser
-paid_ok, paid_reason, client_ref = is_payment_ok()
-
-# ------------------------------------------------------------
-# Paywall (uniquement en FINAL)
-# ------------------------------------------------------------
-if (MODE != "precheck") and (not paid_ok):
-    st.markdown("## Vérification — 7,50 €")
-    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
-    if PAYMENT_LINK:
-        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
-        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
-    else:
-        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
-
-    # Debug "early" (avant le checkbox UI)
-    if DEBUG:
-        st.info(f"[debug] accès refusé: {paid_reason}")
-
-    st.stop()
 # ------------------------------------------------------------
 # Stockage Cloudflare R2 (S3-compatible) — PDF temporaire
 # ------------------------------------------------------------
@@ -125,7 +101,6 @@ def r2_put_pdf(pdf_bytes: bytes, precheck_id: str) -> tuple[bool, str]:
         return False, "missing_R2_BUCKET"
 
     key = f"prechecks/{precheck_id}.pdf"
-
     try:
         s3.put_object(
             Bucket=bucket,
@@ -147,85 +122,16 @@ def r2_get_pdf(precheck_id: str) -> tuple[bytes | None, str]:
         return None, "missing_R2_BUCKET"
 
     key = f"prechecks/{precheck_id}.pdf"
-
     try:
         obj = s3.get_object(Bucket=bucket, Key=key)
         return obj["Body"].read(), "ok"
     except Exception as e:
         return None, f"r2_get_error:{type(e).__name__}"
-
 # ------------------------------------------------------------
-# Helper URL : ajout de paramètres (Stripe client_reference_id)
+# Helper : extraction texte + OCR automatique
 # ------------------------------------------------------------
-def add_query_params(url: str, params: dict) -> str:
-    u = urlparse(url)
-    q = dict(parse_qsl(u.query, keep_blank_values=True))
-    q.update({k: str(v) for k, v in params.items() if v is not None})
-    return urlunparse((u.scheme, u.netloc, u.path, u.params, urlencode(q), u.fragment))
-# ------------------------------------------------------------
-# Helper de nettoyage
-# ------------------------------------------------------------
-def fix_doubled_letters(s: str) -> str:
-    """Supprime les lettres doublées consécutives (SSiirreett -> Siret)."""
-    result = []
-    i = 0
-    while i < len(s):
-        ch = s[i]
-        result.append(ch)
-        if i + 1 < len(s) and s[i + 1] == ch and ch.isalpha():
-            i += 2
-        else:
-            i += 1
-    return "".join(result)
-
-
-def norm_spaces(s: str) -> str:
-    s = (s or "").replace("\xa0", " ")
-    s = re.sub(r"[ \t]+", " ", s)
-    s = re.sub(r"\n{2,}", "\n", s)
-    return s.strip()
-
-
-def dedouble_digits_if_all_pairs(token: str) -> str:
-    """
-    Dédouble un token uniquement si :
-    - seulement des chiffres
-    - longueur paire
-    - chaque paire est identique (ex: 22002255 -> 2025)
-    """
-    if not token.isdigit() or len(token) % 2 != 0:
-        return token
-    out = []
-    for i in range(0, len(token), 2):
-        if token[i] != token[i + 1]:
-            return token
-        out.append(token[i])
-    return "".join(out)
-
-
-def normalize_doubled_digits_in_dates(text: str) -> str:
-    """
-    Corrige surtout les dates/années quand les chiffres sont doublés.
-    Ex: 0011//1122//22002255 -> 01/12/2025
-    """
-    t = text or ""
-
-    def repl_date(m):
-        a = dedouble_digits_if_all_pairs(m.group(1))
-        b = dedouble_digits_if_all_pairs(m.group(2))
-        c = dedouble_digits_if_all_pairs(m.group(3))
-        return f"{a}/{b}/{c}"
-
-    t = re.sub(r"\b(\d{2,4})[\/\-]{1,2}(\d{2,4})[\/\-]{1,2}(\d{4,8})\b", repl_date, t)
-    t = re.sub(r"\b\d{8}\b", lambda m: dedouble_digits_if_all_pairs(m.group(0)), t)
-    return t
-
-
-# ------------------------------------------------------------
-# Fonction d'extraction des données du PDF (OCR si nécessaire)
-# ------------------------------------------------------------
-
 def pdf_to_page_images(file, dpi=250):
+    """Convertit le PDF en images par page pour OCR."""
     file.seek(0)
     images = []
     with pdfplumber.open(file) as pdf:
@@ -233,16 +139,16 @@ def pdf_to_page_images(file, dpi=250):
             images.append(p.to_image(resolution=dpi).original)
     return images
 
-
 def ocr_pdf_to_text(file, dpi=250, lang="fra") -> str:
+    """OCR d'un PDF (scan ou image)."""
     imgs = pdf_to_page_images(file, dpi=dpi)
     out = []
     for im in imgs:
         out.append(pytesseract.image_to_string(im, lang=lang))
     return "\n".join(out)
 
-
 def extract_text_auto(file, dpi=250, force_ocr=False):
+    """Extraction classique + OCR si nécessaire."""
     file.seek(0)
     classic = ""
     with pdfplumber.open(file) as pdf:
@@ -261,14 +167,8 @@ def extract_text_auto(file, dpi=250, force_ocr=False):
 
     return classic, False, images
 
-
 def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
-    """
-    Version 'par page' de l'extraction :
-    - texte PDF classique par page
-    - OCR seulement si page quasi vide (ou force_ocr)
-    Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
-    """
+    """Extraction par page, avec OCR si nécessaire."""
     file.seek(0)
     images = pdf_to_page_images(file, dpi=dpi)
 
@@ -283,7 +183,7 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
             page_texts.append(t)
             page_ocr.append(False)
 
-    # OCR page par page si besoin
+    # OCR page par page si nécessaire
     for i, t in enumerate(page_texts):
         if force_ocr or len(t) < 40:
             try:
@@ -298,9 +198,10 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     used_ocr_any = any(page_ocr)
     return all_text, used_ocr_any, images, page_texts, page_ocr
 # ------------------------------------------------------------
-# Fonctions d'extraction des montants (Net, Brut, Cotisations, etc.)
+# Extraction des montants / valeurs
 # ------------------------------------------------------------
 def to_float_fr(s: str):
+    """Convertir un montant au format français en float."""
     if s is None:
         return None
     s = s.replace("\xa0", " ").replace(" ", "").replace(",", ".")
@@ -309,8 +210,8 @@ def to_float_fr(s: str):
     except ValueError:
         return None
 
-
 def extract_amounts_money(line: str):
+    """Extraire les montants (valeurs numériques) d'une ligne de texte."""
     raw = re.findall(r"\d[\d\s]*[.,]\d{2}", line)
     vals = []
     for r in raw:
@@ -319,13 +220,13 @@ def extract_amounts_money(line: str):
             vals.append(v)
     return vals
 
-
 def extract_last_amount_money(line: str):
+    """Extraire le dernier montant trouvé sur une ligne."""
     vals = extract_amounts_money(line)
     return vals[-1] if vals else None
 
-
 def find_last_line_with_amount(text: str, include_patterns, exclude_patterns=None):
+    """Trouver la dernière ligne contenant un montant et qui correspond à un pattern donné."""
     exclude_patterns = exclude_patterns or []
     best_line = None
     best_val = None
@@ -342,85 +243,399 @@ def find_last_line_with_amount(text: str, include_patterns, exclude_patterns=Non
             best_line = line
             best_val = v
     return best_val, best_line
-
-
-def eur(v):
-    if v is None:
-        return "-"
-    s = f"{v:,.2f}".replace(",", " ").replace(".", ",")
-    return f"{s} EUR"
 # ------------------------------------------------------------
-# UI upload
+# QUADRA — charges, acompte, total versé employeur, CP
 # ------------------------------------------------------------
 
-OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
-DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+def extract_charges_quadra(text: str):
+    charges_sal = None
+    charges_pat = None
+    line_used = None
+    method = None
+    for line in (text or "").splitlines():
+        low = line.lower()
+        if "total des retenues" in low or "total retenues" in low:
+            vals = extract_amounts_money(line)
+            if len(vals) >= 2:
+                charges_sal = vals[-2]
+                charges_pat = vals[-1]
+                line_used = line.strip()
+                method = "total_retenues_two_amounts"
+    return charges_sal, charges_pat, line_used, method
+
+def extract_csg_non_deductible_total(text: str):
+    """
+    QUADRA : CSG/CRDS non déductible peut être sur plusieurs lignes.
+    Stratégie : repérer un taux plausible puis prendre le montant qui suit immédiatement ce taux.
+    Retour : (total, lines_used)
+    """
+    total = 0.0
+    lines_used = []
+
+    for line in (text or "").splitlines():
+        low = line.lower()
+        if "csg" not in low:
+            continue
+        if ("non déduct" not in low) and ("non deduct" not in low):
+            continue
+
+        toks = re.findall(r"\d+(?:[.,]\d+)?", line)
+        if not toks:
+            continue
+
+        nums = []
+        for t in toks:
+            v = to_float_fr(t.replace(",", "."))
+            if v is not None:
+                nums.append(v)
+
+        if len(nums) < 2:
+            continue
+
+        picked = None
+        for i, v in enumerate(nums):
+            if 0.1 <= v <= 20.0:  # taux plausible
+                if i + 1 < len(nums):
+                    cand = nums[i + 1]
+                    if 0 <= cand <= 2000:
+                        picked = cand
+                        break
+
+        if picked is None:
+            small = [v for v in nums if 0 <= v <= 2000]
+            if small:
+                picked = min(small)
+
+        if picked is not None:
+            total += picked
+            lines_used.append(line)
+
+    if not lines_used:
+        return None, None
+
+    return round(total, 2), lines_used
+
+def extract_acompte(text: str, net_paye: float | None = None, brut: float | None = None):
+    """Extraction de l'acompte (avance, déjà versé)"""
+    lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+    best = None
+    best_line = None
+
+    if net_paye is not None and net_paye > 0:
+        max_ok = net_paye * 1.5
+    elif brut is not None and brut > 0:
+        max_ok = brut * 1.5
+    else:
+        max_ok = 6000
+
+    def sanitize_year_glue(s: str) -> str:
+        s2 = re.sub(r"\b20\d{2}\b", " ", s)
+        s2 = re.sub(r"\b2\s+0\d{2}\b", " ", s2)
+        return s2
+
+    def pick_plausible(vals, has_year: bool):
+        out = []
+        for v in vals:
+            if v is None or v <= 0:
+                continue
+            if v > max_ok:
+                continue
+            if has_year and v > 2000:
+                continue
+            out.append(v)
+        if not out:
+            return None
+        return max(out)
+
+    best = None
+    best_line = None
+
+    for line in lines:
+        low = line.lower()
+        if not (("acompte" in low) or ("avance" in low) or ("déjà vers" in low) or ("deja vers" in low)):
+            continue
+
+        has_year = bool(re.search(r"\b20\d{2}\b", line)) or bool(re.search(r"\b2\s+0\d{2}\b", line))
+
+        # 1) extraction brute
+        vals1 = extract_amounts_money(line)
+        v = pick_plausible(vals1, has_year=has_year)
+
+        # 2) fallback : on retire l'année si elle a été collée / bruitée
+        if v is None and has_year:
+            line2 = sanitize_year_glue(line)
+            vals2 = extract_amounts_money(line2)
+            v = pick_plausible(vals2, has_year=False)
+
+        if v is not None:
+            best = v
+            best_line = line
+
+    return best, best_line
+# ------------------------------------------------------------
+# PDF : Génération du résumé
+# ------------------------------------------------------------
+def wrap_title_for_box(title: str, max_chars=18):
+    """Réduit le titre à un nombre de caractères max, avec un retour à la ligne si nécessaire."""
+    words = title.split()
+    lines = []
+    cur = ""
+    for w in words:
+        if len(cur) + len(w) + (1 if cur else 0) > max_chars:
+            lines.append(cur)
+            cur = w
+        else:
+            cur = (cur + " " + w).strip()
+    if cur:
+        lines.append(cur)
+    return lines[:2]
+
+def step_box(c, x, y, w, h, title, value, fill_hex):
+    """Affiche un carré avec un titre et une valeur."""
+    c.setStrokeColor(colors.HexColor("#222222"))
+    c.setFillColor(colors.HexColor(fill_hex))
+    c.roundRect(x, y - h, w, h, 10, stroke=1, fill=1)
+
+    title_lines = wrap_title_for_box(title, max_chars=18)
+    c.setFillColor(colors.HexColor("#111111"))
+    c.setFont("Helvetica-Bold", 9 if len(title_lines) == 2 else 10)
+    ty = y - 16
+    for tl in title_lines:
+        c.drawString(x + 10, ty, tl)
+        ty -= 11
+
+    c.setFont("Helvetica-Bold", 13)
+    c.drawCentredString(x + w / 2, y - h + 22, value)
+
+def build_pdf(fields, comments, fmt_name):
+    """Génère le PDF du résumé de salaire."""
+    buf = io.BytesIO()
+    c = canvas.Canvas(buf, pagesize=A4)
+    W, H = A4
+    margin = 2 * cm
+    x0 = margin
+    y = H - margin
+
+    c.setFont("Helvetica-Bold", 16)
+    c.drawString(x0, y, "Résumé simplifié de ton bulletin de salaire")
+    y -= 18
+
+    c.setFont("Helvetica-Oblique", 10)
+    c.setFillColor(colors.HexColor("#555555"))
+    c.drawString(x0, y, "Document pédagogique - le bulletin officiel reste la référence")
+    y -= 14
+    c.drawString(x0, y, f"Format détecté : {fmt_name}")
+    y -= 16
+
+    c.setFillColor(colors.HexColor("#eef6ff"))
+    c.setStrokeColor(colors.HexColor("#1f77b4"))
+    c.roundRect(x0, y - 34, W - 2 * margin, 34, 8, stroke=1, fill=1)
+    c.setFillColor(colors.HexColor("#0b3d62"))
+    c.setFont("Helvetica-Bold", 10)
+    c.drawString(x0 + 10, y - 14, "Confidentialité :")
+    c.setFont("Helvetica", 9)
+    c.drawString(x0 + 110, y - 14, "aucun stockage du PDF - analyse ponctuelle.")
+    y -= 48
+
+    c.setFillColor(colors.HexColor("#555555"))
+    c.setFont("Helvetica", 10)
+    c.drawString(x0, y, f"Période : {fields.get('period') or '-'}")
+    c.drawRightString(W - margin, y, f"Généré le {dt.datetime.now().strftime('%d/%m/%Y %H:%M')}")
+    c.setFillColor(colors.black)
+    y -= 18
+
+    # Ajout des autres champs : brut, net, charges, acompte, etc.
+    brut = fields.get("brut")
+    net_paye = fields.get("net_paye")
+    acompte = fields.get("acompte")
+    net_ref = fields.get("net_reference")
+    pas = fields.get("pas")
+    charges_sal = fields.get("charges_sal")
+    charges_pat = fields.get("charges_pat")
+    csg_nd = fields.get("csg_non_deductible")
+    organismes_total = fields.get("organismes_total")
+    cout_total = fields.get("cout_total")
+    cp = fields.get("cp", {}) or {}
+
+    # 4 carrés
+    path_top = y - 10
+    path_h = 86
+    gap = 10
+    w_total = W - 2 * margin
+    step_w = (w_total - 3 * gap) / 4
+    step_h = path_h
+    step_y = path_top
+
+    x1 = x0
+    x2 = x1 + step_w + gap
+    x3 = x2 + step_w + gap
+    x4 = x3 + step_w + gap
+
+    step_box(c, x1, step_y, step_w, step_h, "1) Salaire brut", eur(brut), "#FFFFFF")
+    step_box(c, x2, step_y, step_w, step_h, "2) Cotisations salariales", eur(charges_sal), "#F3E8FF")
+    step_box(c, x3, step_y, step_w, step_h, "3) Impôt (PAS)", eur(pas), "#FFF4E5")
+    step_box(c, x4, step_y, step_w, step_h, "4) Net payé", eur(net_paye), "#E8F7EE")
+
+    mid_y = step_y - step_h / 2
+    arrow(c, x1 + step_w, mid_y, x2, mid_y)
+    arrow(c, x2 + step_w, mid_y, x3, mid_y)
+    arrow(c, x3 + step_w, mid_y, x4, mid_y)
+
+    # Affichage de la synthèse
+    y_after_path = step_y - step_h - 18
+    cards_top = y_after_path - 18
+    card_h = 125
+    card_w = (w_total - 12) / 2
+    left_x = x0
+    right_x = x0 + card_w + 12
+
+    emp_lines = [f"Il te verse : {eur(net_paye)}"]
+    if acompte and acompte > 0:
+        emp_lines.append(f"Acompte déjà versé : {eur(acompte)}")
+        emp_lines.append(f"Net reconstitué : {eur(net_ref)}")
+    emp_lines.append(f"Organismes sociaux (total) : {eur(organismes_total)}")
+    emp_lines.append(f"Impôts (PAS) : {eur(pas)}")
+    emp_lines.append(f"Coût total employeur : {eur(cout_total)}")
+
+    card(c, left_x, cards_top, card_w, card_h, "Côté employeur", emp_lines, "#EAF2FF")
+
+    if cp.get("cp_total") is not None:
+        cp_lines = [
+            f"CP N-1 (solde) : {cp.get('cp_n1', 0.0):.2f} j",
+            f"CP N (solde) : {cp.get('cp_n', 0.0):.2f} j",
+            f"Total : {cp.get('cp_total', 0.0):.2f} j",
+            "Solde = jours disponibles.",
+        ]
+    else:
+        cp_lines = ["Congés : non lisibles automatiquement sur ce PDF.", "Je préfère être honnête que créatif."]
+
+    card(c, right_x, cards_top, card_w, card_h, "Congés payés (solde)", cp_lines, "#F3E8FF")
+
+    # Génération du PDF avec les commentaires
+    y_comments = cards_top - card_h - 28
+    c.setFont("Helvetica-Bold", 12)
+    c.setFillColor(colors.HexColor("#111111"))
+    c.drawString(x0, y_comments, "Ce qu'il faut retenir (humour factuel)")
+    c.setFont("Helvetica", 10)
+    c.setFillColor(colors.black)
+
+    def wrap(s, max_chars=105):
+        words = s.split()
+        out = []
+        cur = ""
+        for w in words:
+            if len(cur) + len(w) + 1 > max_chars:
+                out.append(cur)
+                cur = w
+            else:
+                cur = (cur + " " + w).strip()
+        if cur:
+            out.append(cur)
+        return out
+
+    yy = y_comments - 16
+    for com in comments:
+        for part in wrap(com):
+            c.drawString(x0, yy, part)
+            yy -= 12
+        yy -= 6
+
+    c.setFont("Helvetica-Oblique", 8)
+    c.setFillColor(colors.HexColor("#666666"))
+    c.drawString(x0, 1.3 * cm, "Le bulletin officiel reste le document de référence.")
+    c.setFillColor(colors.black)
+
+    c.showPage()
+    c.save()
+    buf.seek(0)
+    return buf
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
 
 # ------------------------------------------------------------
-# Période
+# MODE FINAL : après paiement, récupérer le PDF depuis R2 (sans re-upload)
 # ------------------------------------------------------------
-MONTHS = {
-    "janvier": "Janvier",
-    "février": "Février",
-    "fevrier": "Février",
-    "mars": "Mars",
-    "avril": "Avril",
-    "mai": "Mai",
-    "juin": "Juin",
-    "juillet": "Juillet",
-    "août": "Août",
-    "aout": "Août",
-    "septembre": "Septembre",
-    "octobre": "Octobre",
-    "novembre": "Novembre",
-    "décembre": "Décembre",
-    "decembre": "Décembre",
-}
+stored_pdf_bytes = None
+if MODE != "precheck" and paid_ok and client_ref:
+    stored_pdf_bytes, r2_reason = r2_get_pdf(client_ref)
+    if stored_pdf_bytes is None:
+        st.warning(f"Paiement OK mais fichier introuvable dans R2 ({r2_reason}).")
+        st.info("➡️ Fallback : re-uploade ton PDF ci-dessous.")
 
-def period_key(period_str: str):
-    """Retourne une clé canonique (année, mois) pour comparer des périodes de bulletin."""
-    if not period_str:
-        return None
-    s = norm_spaces(period_str).lower()
+# ------------------------------------------------------------
+# Affichage UI : on autorise l'analyse si
+# - soit on a le PDF stocké en R2
+# - soit l'utilisateur a uploadé un PDF
+# ------------------------------------------------------------
+has_pdf = (stored_pdf_bytes is not None) or (uploaded is not None)
 
-    mois = {
-        "janvier": 1, "janv": 1,
-        "février": 2, "fevrier": 2, "févr": 2, "fevr": 2,
-        "mars": 3,
-        "avril": 4, "avr": 4,
-        "mai": 5,
-        "juin": 6,
-        "juillet": 7, "juil": 7,
-        "août": 8, "aout": 8,
-        "septembre": 9, "sept": 9,
-        "octobre": 10, "oct": 10,
-        "novembre": 11, "nov": 11,
-        "décembre": 12, "decembre": 12, "déc": 12, "dec": 12,
-    }
+if not has_pdf:
+    st.info("En attente d'un PDF…")
+    st.stop()
 
-    # cas: "du 01/11/2025 au 30/11/2025"
-    m = re.search(
-        r"\b(\d{2})[\/\-](\d{2})[\/\-](\d{4})\b.*?\b(\d{2})[\/\-](\d{2})[\/\-](\d{4})\b",
-        s
+st.success("PDF reçu ✅")
+
+if st.button("Analyser le bulletin", type="primary"):
+    import time
+    t0 = time.time()
+
+    status = st.status("Démarrage de l'analyse…", expanded=True)
+    status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+
+    # ✅ Choix de la source du PDF (DANS le bouton)
+    if stored_pdf_bytes is not None:
+        file_obj = io.BytesIO(stored_pdf_bytes)
+    else:
+        file_obj = io.BytesIO(uploaded.getvalue())
+
+    # ✅ Extraction
+    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+        file_obj, dpi=DPI, force_ocr=OCR_FORCE
     )
-    if m:
-        m1, y1 = int(m.group(2)), int(m.group(3))
-        m2, y2 = int(m.group(5)), int(m.group(6))
-        if (m1, y1) == (m2, y2):
-            return (y1, m1)
-        return (y1, m1, y2, m2)
+    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
-    # cas: "11/2025" ou "11-2025"
-    m = re.search(r"\b(0?[1-9]|1[0-2])[\/\-](20\d{2})\b", s)
-    if m:
-        return (int(m.group(2)), int(m.group(1)))
+    # ✅ Vérif bulletin
+    status.write("2/6 Vérification du document…")
+    ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+    if not ok_doc:
+        status.update(label="Analyse interrompue", state="error")
+        st.error(msg_doc)
+        if DEBUG:
+            st.json(doc_dbg)
+        st.stop()
 
-    # cas: "novembre 2025"
-    for name, num in mois.items():
-        if re.search(rf"\b{name}\b", s):
-            my = re.search(r"\b(20\d{2})\b", s)
-            if my:
-                return (int(my.group(1)), num)
+    # ✅ Format
+    fmt, fmt_dbg = detect_format(text)
+    status.write(f"✅ Document valide — format détecté: {fmt}")
+    status.write("3/6 Extraction des champs principaux…")
 
-    return None
+    # DEBUG: uniquement affichage
+    if DEBUG:
+        st.write(f"Format détecté : **{fmt}**")
+        st.json({"ocr": used_ocr, **fmt_dbg})
+        with st.expander("Texte extrait (début)") :
+            st.text((text or "")[:12000])
+
+    # Récupération des autres champs (extraction)
+    period, period_line = extract_period(text)
+    brut, brut_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+        exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+    )
+
+    net_paye, net_paye_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+        exclude_patterns=[r"avant\s+imp", r"imposable"],
+    )
+
+    pas, pas_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu", r"pr[ée]l[èe]vement\s+à\s+la\s+source", r"\bpas\b"],
+        exclude_patterns=[r"csg", r"crds", r"deduct", r"non\s+deduct"],
+    )
+
+    # Extraction des informations selon le format
+    # et génération de la synthèse avec les commentaires
