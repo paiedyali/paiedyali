@@ -38,7 +38,64 @@ from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
 
+
+# Modified the workflow to allow partial analysis before Stripe payment.
+
 # ------------------------------------------------------------
+# 1. Handling PDF upload and partial analysis before payment
+# ------------------------------------------------------------
+
+if uploaded is not None:
+    st.success("PDF reçu ✅")
+
+    # Streamlit relance le script à chaque interaction.
+    # Un bouton explicite évite les "PDF reçu mais rien après".
+    if st.button("Analyser le bulletin (partiel)", type="primary"):
+
+        # ------------------------------------------------------------
+        # Analyse partielle: Vérification si le bulletin est lisible
+        # ------------------------------------------------------------
+
+        # Extraction du texte du PDF et OCR si nécessaire
+        file_obj = io.BytesIO(uploaded.getvalue())
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+
+        # Vérification si le PDF est valide
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            st.error(msg_doc)
+            if DEBUG:
+                st.json(doc_dbg)
+            st.stop()
+
+        st.write("✅ Bulletin de salaire valide — analyse partielle terminée.")
+        st.write("📥 Tu peux maintenant procéder au paiement pour l'analyse complète.")
+
+        # ------------------------------------------------------------
+        # Paiement Stripe
+        # ------------------------------------------------------------
+        paid_ok, paid_reason = is_payment_ok()
+        if not paid_ok:
+            st.markdown("## Vérification — 7,50 €")
+            st.write("Pour analyser ton bulletin de manière complète, un paiement de **7,50 €** est requis.")
+            if PAYMENT_LINK:
+                st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
+                st.caption("Après paiement, tu seras redirigé vers cette page pour compléter l'analyse.")
+            else:
+                st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
+            if DEBUG:
+                st.info(f"[debug] accès refusé: {paid_reason}")
+            st.stop()
+
+        st.write("✅ Paiement validé ! Tu peux maintenant accéder à l'analyse complète.")
+
+        # ------------------------------------------------------------
+        # Analyse complète et synthèse
+        # ------------------------------------------------------------
+        # Proceed with the rest of the analysis and PDF generation...
+        # Place here the existing logic for complete analysis and synthesis.
+
+
 # UI
 # ------------------------------------------------------------
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
