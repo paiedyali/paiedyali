@@ -1,4 +1,4 @@
-G57# appv3.py — QUADRA + SILAE (OCR auto), PDF synthèse téléchargeable
+# appv3.py — QUADRA + SILAE (OCR auto), PDF synthèse téléchargeable
 # Corrections incluses :
 # - SILAE : filtre anti-acompte délirant (ex: 2 025 500,00)
 # - QUADRA : "Total" puis "Versé employeur" sur ligne suivante (montant sur i / i+1 / i+2 / i+3 / i+4)
