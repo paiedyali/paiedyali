@@ -44,6 +44,42 @@ from reportlab.pdfgen import canvas
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
+# ------------------------------------------------------------
+# Composant pour télécharger le fichier PDF
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+
+# ------------------------------------------------------------
+# Vérification si un fichier a bien été téléchargé
+if uploaded is not None:
+    # Si un fichier est téléchargé, on continue avec l'analyse
+    file_obj = io.BytesIO(uploaded.getvalue())
+
+    # Ici tu peux ajouter ta logique pour extraire le texte et analyser le PDF
+    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+
+    st.success("Fichier reçu ✅")
+
+    status = st.status("Démarrage de l'analyse…", expanded=True)
+
+    status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+
+    # Poursuite de ton processus d'analyse, par exemple :
+    status.write("2/6 Vérification du document…")
+    ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+    if not ok_doc:
+        status.update(label="Analyse interrompue", state="error")
+        st.error(msg_doc)
+        if DEBUG:
+            st.json(doc_dbg)
+        st.stop()
+
+    fmt, fmt_dbg = detect_format(text)
+    status.write(f"✅ Document valide — format détecté: {fmt}")
+    # Suite du traitement...
+else:
+    # Si aucun fichier n'est téléchargé, on invite l'utilisateur à télécharger un fichier
+    st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
 
 st.markdown(
     """
