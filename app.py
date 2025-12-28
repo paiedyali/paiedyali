@@ -49,22 +49,24 @@ st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
 
 # ------------------------------------------------------------
-# Vérification si un fichier a bien été téléchargé
+# Vérifie si un fichier a été téléchargé
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
+
+# Vérification si un fichier a bien été téléchargé avant de l'utiliser
 if uploaded is not None:
     # Si un fichier est téléchargé, on continue avec l'analyse
     file_obj = io.BytesIO(uploaded.getvalue())
-
-    # Ici tu peux ajouter ta logique pour extraire le texte et analyser le PDF
-    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
-
     st.success("Fichier reçu ✅")
 
+    # Poursuite de la logique pour extraire le texte et analyser le PDF
     status = st.status("Démarrage de l'analyse…", expanded=True)
 
     status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
-    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+    text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
 
-    # Poursuite de ton processus d'analyse, par exemple :
+    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+    
+    # Poursuite du processus d'analyse
     status.write("2/6 Vérification du document…")
     ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
     if not ok_doc:
@@ -80,6 +82,7 @@ if uploaded is not None:
 else:
     # Si aucun fichier n'est téléchargé, on invite l'utilisateur à télécharger un fichier
     st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
+
 
 st.markdown(
     """
