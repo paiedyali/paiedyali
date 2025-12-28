@@ -571,20 +571,30 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
             page_texts.append(t)
             page_ocr.append(False)
 
-    # OCR page par page si besoin
-    for i, t in enumerate(page_texts):
-        if force_ocr or len(t) < 40:
-            try:
+   # OCR page par page si besoin
+for i, t in enumerate(page_texts):
+    if force_ocr or len(t) < 40:
+        try:
+            if images[i] is not None:  # Vérification de la validité de l'image
                 ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
-            except Exception:
-                ocr_t = ""
-            if len(ocr_t) > len(t):
-                page_texts[i] = ocr_t
-            page_ocr[i] = True
+            else:
+                ocr_t = ""  # Si l'image est vide ou None, on ignore l'OCR
+        except Exception:
+            ocr_t = ""  # En cas d'erreur, on met ocr_t à une chaîne vide
 
-    all_text = "\n".join(page_texts).strip()
-    used_ocr_any = any(page_ocr)
-    return all_text, used_ocr_any, images, page_texts, page_ocr
+        # Si l'OCR a produit plus de texte que l'original, on le remplace
+        if len(ocr_t) > len(t):
+            page_texts[i] = ocr_t
+        page_ocr[i] = True  # Marquer que l'OCR a été utilisé sur cette page
+
+# Rassembler tout le texte extrait
+all_text = "\n".join(page_texts).strip()
+
+# Vérifier si l'OCR a été utilisé pour au moins une page
+used_ocr_any = any(page_ocr)
+
+# Retourner les résultats
+return all_text, used_ocr_any, images, page_texts, page_ocr
 
 def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
     """
