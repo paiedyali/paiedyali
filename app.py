@@ -1,4 +1,4 @@
-# appv3.py — QUADRA + SILAE (OCR auto), PDF synthèse téléchargeable
+G57# appv3.py — QUADRA + SILAE (OCR auto), PDF synthèse téléchargeable
 # Corrections incluses :
 # - SILAE : filtre anti-acompte délirant (ex: 2 025 500,00)
 # - QUADRA : "Total" puis "Versé employeur" sur ligne suivante (montant sur i / i+1 / i+2 / i+3 / i+4)
@@ -559,42 +559,42 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
     """
     file.seek(0)
-    images = pdf_to_page_images(file, dpi=dpi)
-
+    images = pdf_to_page_images(file, dpi=dpi)  # Convertit les pages du PDF en images
     page_texts = []
-    page_ocr = []
+    page_ocr = []  # Liste pour suivre l'utilisation de l'OCR sur chaque page
+
     file.seek(0)
     with pdfplumber.open(file) as pdf:
         for i, p in enumerate(pdf.pages):
             t = p.extract_text() or ""
             t = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(t)))
-            page_texts.append(t)
-            page_ocr.append(False)
+            page_texts.append(t)  # Ajout du texte extrait de la page
+            page_ocr.append(False)  # Initialiser à False (pas d'OCR utilisé au départ)
 
-   # OCR page par page si besoin
-for i, t in enumerate(page_texts):
-    if force_ocr or len(t) < 40:
-        try:
-            if images[i] is not None:  # Vérification de la validité de l'image
-                ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
-            else:
-                ocr_t = ""  # Si l'image est vide ou None, on ignore l'OCR
-        except Exception:
-            ocr_t = ""  # En cas d'erreur, on met ocr_t à une chaîne vide
+    # OCR page par page si besoin
+    for i, t in enumerate(page_texts):
+        if force_ocr or len(t) < 40:  # Si le texte est trop court ou si OCR est forcé
+            try:
+                if images[i] is not None:  # Vérification de la validité de l'image
+                    ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
+                else:
+                    ocr_t = ""  # Si l'image est vide ou None, on ignore l'OCR
+            except Exception:
+                ocr_t = ""  # En cas d'erreur, on met ocr_t à une chaîne vide
 
-        # Si l'OCR a produit plus de texte que l'original, on le remplace
-        if len(ocr_t) > len(t):
-            page_texts[i] = ocr_t
-        page_ocr[i] = True  # Marquer que l'OCR a été utilisé sur cette page
+            # Si l'OCR a produit plus de texte que l'original, on le remplace
+            if len(ocr_t) > len(t):
+                page_texts[i] = ocr_t
+            page_ocr[i] = True  # Marquer que l'OCR a été utilisé sur cette page
 
-# Rassembler tout le texte extrait
-all_text = "\n".join(page_texts).strip()
+    # Rassembler tout le texte extrait
+    all_text = "\n".join(page_texts).strip()
 
-# Vérifier si l'OCR a été utilisé pour au moins une page
-used_ocr_any = any(page_ocr)
+    # Vérifier si l'OCR a été utilisé pour au moins une page
+    used_ocr_any = any(page_ocr)
 
-# Retourner les résultats
-return all_text, used_ocr_any, images, page_texts, page_ocr
+    # Retourner les résultats
+    return all_text, used_ocr_any, images, page_texts, page_ocr
 
 def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
     """
