@@ -49,33 +49,79 @@ st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour
 # Bouton pour télécharger le fichier PDF
 uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
 
+# Vérification du paiement avant l'analyse
+payment_status = st.radio("Status du paiement", ("Non payé", "Payé"), index=0)
+
 # Vérifie si un fichier a bien été téléchargé
 if uploaded is not None:
-    try:
-        # Si un fichier est téléchargé, on continue avec l'analyse
-        file_obj = io.BytesIO(uploaded.getvalue())
-        st.success("Fichier reçu ✅")
+    # L'analyse commence uniquement si le paiement est effectué
+    if payment_status == "Payé":  # L'analyse commence uniquement si le paiement est effectué
+        try:
+            # Si un fichier est téléchargé, on continue avec l'analyse
+            file_obj = io.BytesIO(uploaded.getvalue())
+            st.success("Fichier reçu ✅")
 
-        # Poursuite du processus d'analyse
-        status.write("2/6 Vérification du document…")
-        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-        if not ok_doc:
-            status.update(label="Analyse interrompue", state="error")
-            st.error(msg_doc)
-            if DEBUG:
-                st.json(doc_dbg)
-            st.stop()
+            # Poursuite de l'analyse
+            status = st.status("Démarrage de l'analyse…", expanded=True)
 
-        fmt, fmt_dbg = detect_format(text)
-        status.write(f"✅ Document valide — format détecté: {fmt}")
-        # Suite du traitement...
-        
-    except Exception as e:
-        st.error(f"Une erreur est survenue lors du traitement du fichier : {e}")
+            # 1. Lecture du PDF + extraction texte (OCR si besoin)
+            status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+            text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+            status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+
+            # 2. Vérification du document
+            status.write("2/6 Vérification du document…")
+            ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+            if not ok_doc:
+                status.update(label="Analyse interrompue", state="error")
+                st.error(msg_doc)
+                if DEBUG:
+                    st.json(doc_dbg)
+                st.stop()  # Arrêter le processus si le document est invalide
+
+            # 3. Détection du format
+            fmt, fmt_dbg = detect_format(text)
+            status.write(f"✅ Document valide — format détecté: {fmt}")
+
+            # 4. Extraction des champs principaux
+            status.write("3/6 Extraction des champs principaux…")
+            # Logique d'extraction des informations spécifiques (exemple)
+            period, period_line = extract_period(text)
+            brut, brut_line = find_last_line_with_amount(text, include_patterns=[r"salaire\s+brut"])
+
+            # Suite de l'analyse (exemples d'extraction supplémentaires)
+            net_paye, net_paye_line = find_last_line_with_amount(text, include_patterns=[r"net\s+paye"])
+            pas, pas_line = find_last_line_with_amount(text, include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu"])
+
+            # 5. Analyse par format (QUADRA ou SILAE)
+            status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
+            if fmt == "QUADRA":
+                charges_sal, charges_pat, charges_line = extract_charges_quadra(text)
+            elif fmt == "SILAE":
+                # Extraction spécifique pour le format SILAE
+                pass
+
+            # 6. Calculs et synthèse
+            status.write("5/6 Calculs et synthèse…")
+            organismes_total = round((charges_sal or 0.0) + (charges_pat or 0.0), 2)
+            st.subheader("🎯 L'essentiel, sans jargon")
+            st.metric("Net payé", eur(net_paye))
+            st.metric("Brut", eur(brut))
+            st.metric("Cotisations salariales", eur(charges_sal))
+
+            # Génération du PDF de synthèse
+            st.write("6/6 Génération du PDF de synthèse…")
+            pdf_buf = build_pdf(fields, comments)
+            st.download_button("⬇️ Télécharger la synthèse PDF", data=pdf_buf.getvalue(), file_name="synthese_bulletin_particulier.pdf")
+
+        except Exception as e:
+            # Capture d'erreur pendant l'analyse
+            st.error(f"Une erreur est survenue lors du traitement du fichier : {e}")
+    else:
+        # Si le paiement n'est pas effectué, afficher un message
+        st.warning("🛑 Vous devez effectuer le paiement avant de commencer l'analyse.")
 else:
-    # Si aucun fichier n'est téléchargé, on invite l'utilisateur à télécharger un fichier
     st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
-
 
 
 st.markdown(
