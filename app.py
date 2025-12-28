@@ -46,7 +46,7 @@ st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 # ------------------------------------------------------------
 # Composant pour télécharger le fichier PDF
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
 
 # ------------------------------------------------------------
 # Vérification si un fichier a bien été téléchargé
