@@ -41,106 +41,10 @@ from reportlab.pdfgen import canvas
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-import streamlit as st
-import io
-import os
-
-import streamlit as st
-import io
-
-# ------------------------------------------------------------
-import streamlit as st
-import io
-
-# ------------------------------------------------------------
-# Configuration de la page
-# ------------------------------------------------------------
 st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
 st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
 st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF (humour factuel).")
 
-# ------------------------------------------------------------
-# Paiement (Stripe ou autre) - Condition préalable pour l'analyse
-payment_status = st.radio("Statut du paiement", ("Non payé", "Payé"), index=0)
-
-# ------------------------------------------------------------
-# Bouton pour télécharger le fichier PDF (UN SEUL bouton)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_key")
-
-# ------------------------------------------------------------
-# Vérification si un fichier a bien été téléchargé
-if uploaded is not None:
-    if payment_status == "Payé":  # L'analyse commence uniquement si le paiement est effectué
-        try:
-            # Si un fichier est téléchargé, on continue avec l'analyse
-            file_obj = io.BytesIO(uploaded.getvalue())
-            st.success("Fichier reçu ✅")
-
-            # Poursuite de l'analyse
-            status = st.status("Démarrage de l'analyse…", expanded=True)
-
-            # 1. Lecture du PDF + extraction texte (OCR si besoin)
-            status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
-            text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
-            status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
-
-            # 2. Vérification du document
-            status.write("2/6 Vérification du document…")
-            ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-            if not ok_doc:
-                status.update(label="Analyse interrompue", state="error")
-                st.error(msg_doc)
-                if DEBUG:
-                    st.json(doc_dbg)
-                st.stop()  # Arrêter le processus si le document est invalide
-
-            # 3. Détection du format
-            fmt, fmt_dbg = detect_format(text)
-            status.write(f"✅ Document valide — format détecté: {fmt}")
-
-            # 4. Extraction des champs principaux
-            status.write("3/6 Extraction des champs principaux…")
-            # Logique d'extraction des informations spécifiques (exemple)
-            period, period_line = extract_period(text)
-            brut, brut_line = find_last_line_with_amount(text, include_patterns=[r"salaire\s+brut"])
-
-            # Suite de l'analyse (exemples d'extraction supplémentaires)
-            net_paye, net_paye_line = find_last_line_with_amount(text, include_patterns=[r"net\s+paye"])
-            pas, pas_line = find_last_line_with_amount(text, include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu"])
-
-            # 5. Analyse par format (QUADRA ou SILAE)
-            status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
-            if fmt == "QUADRA":
-                charges_sal, charges_pat, charges_line = extract_charges_quadra(text)
-            elif fmt == "SILAE":
-                # Extraction spécifique pour le format SILAE
-                pass
-
-            # 6. Calculs et synthèse
-            status.write("5/6 Calculs et synthèse…")
-            organismes_total = round((charges_sal or 0.0) + (charges_pat or 0.0), 2)
-            st.subheader("🎯 L'essentiel, sans jargon")
-            st.metric("Net payé", eur(net_paye))
-            st.metric("Brut", eur(brut))
-            st.metric("Cotisations salariales", eur(charges_sal))
-
-            # Génération du PDF de synthèse
-            st.write("6/6 Génération du PDF de synthèse…")
-            pdf_buf = build_pdf(fields, comments)
-            st.download_button("⬇️ Télécharger la synthèse PDF", data=pdf_buf.getvalue(), file_name="synthese_bulletin_particulier.pdf")
-
-        except Exception as e:
-            # Capture d'erreur pendant l'analyse
-            st.error(f"Une erreur est survenue lors du traitement du fichier : {e}")
-    else:
-        # Si le paiement n'est pas effectué, afficher un message
-        st.warning("🛑 Vous devez effectuer le paiement avant de commencer l'analyse.")
-else:
-    # Si aucun fichier n'est téléchargé, afficher un message d'instruction
-    st.info("ℹ️ Veuillez télécharger un fichier PDF pour commencer l'analyse.")
-
-
-# Confidentialité - Message
 st.markdown(
     """
 <div style="
@@ -163,6 +67,59 @@ st.markdown(
 
 DEBUG = st.checkbox("Mode debug", value=False)
 
+# --- STATE MACHINE (à mettre après la config UI) ---
+if "step" not in st.session_state:
+    st.session_state.step = "PRECHECK"   # PRECHECK -> NEED_PAYMENT -> FULL_ANALYSIS -> DONE
+
+if "uploaded_pdf_bytes" not in st.session_state:
+    st.session_state.uploaded_pdf_bytes = None  # permet de garder le PDF entre étapes (même navigateur)
+
+# 1) On lit l'URL (retour Stripe éventuel)
+paid_ok, paid_reason = is_payment_ok()
+if paid_ok:
+    # si Stripe OK, on autorise l'analyse complète
+    if st.session_state.step in ("PRECHECK", "NEED_PAYMENT"):
+        st.session_state.step = "FULL_ANALYSIS"
+
+# 2) Upload accessible tout le temps
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+
+# 3) Étape PRECHECK : vérifier lisibilité/validité sans paiement
+if st.session_state.step == "PRECHECK":
+    st.info("Étape 1/2 : vérification de lisibilité (gratuite)")
+
+    if uploaded is not None and st.button("Vérifier la lisibilité", type="primary"):
+        st.session_state.uploaded_pdf_bytes = uploaded.getvalue()
+
+        file_obj = io.BytesIO(st.session_state.uploaded_pdf_bytes)
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+            file_obj, dpi=DPI, force_ocr=OCR_FORCE
+        )
+
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            st.error(msg_doc)
+            if DEBUG:
+                st.json(doc_dbg)
+            st.stop()
+
+        fmt, fmt_dbg = detect_format(text)
+        st.success(f"✅ Bulletin lisible et valide. Format détecté : {fmt}")
+
+        st.session_state.step = "NEED_PAYMENT"
+
+# 4) Étape NEED_PAYMENT : afficher Stripe
+if st.session_state.step == "NEED_PAYMENT":
+    st.warning("Étape 2/2 : paiement requis pour lancer l’analyse complète (7,50 €).")
+
+    if PAYMENT_LINK:
+        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
+        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
+    else:
+        st.error("Paiement non configuré : STRIPE_PAYMENT_LINK manquante.")
+
+    # Si l’utilisateur revient avec session_id payé, step passera à FULL_ANALYSIS via le bloc paid_ok plus haut.
+    st.stop()
 
 
 # ------------------------------------------------------------
@@ -215,7 +172,19 @@ def is_payment_ok() -> tuple[bool, str]:
     except Exception as e:
         return False, f"stripe_error:{type(e).__name__}"
 
-# Paiement Stripe : vérifié plus tard (après pré-analyse)
+paid_ok, paid_reason = is_payment_ok()
+if not paid_ok:
+    st.markdown("## Vérification — 7,50 €")
+    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
+    if PAYMENT_LINK:
+        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
+        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
+    else:
+        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
+    if DEBUG:
+        st.info(f"[debug] accès refusé: {paid_reason}")
+    st.stop()
+
 # ------------------------------------------------------------
 # Crédit d'analyse : 1 paiement = 1 analyse
 #
@@ -292,8 +261,7 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
 # ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
 DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"], key="unique_file_uploader_2")
-
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
 # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -559,41 +527,31 @@ def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
     Retourne (all_text, used_ocr_any, images, page_texts, page_used_ocr_flags)
     """
     file.seek(0)
-    images = pdf_to_page_images(file, dpi=dpi)  # Convertit les pages du PDF en images
-    page_texts = []
-    page_ocr = []  # Liste pour suivre l'utilisation de l'OCR sur chaque page
+    images = pdf_to_page_images(file, dpi=dpi)
 
+    page_texts = []
+    page_ocr = []
     file.seek(0)
     with pdfplumber.open(file) as pdf:
         for i, p in enumerate(pdf.pages):
             t = p.extract_text() or ""
             t = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(t)))
-            page_texts.append(t)  # Ajout du texte extrait de la page
-            page_ocr.append(False)  # Initialiser à False (pas d'OCR utilisé au départ)
+            page_texts.append(t)
+            page_ocr.append(False)
 
     # OCR page par page si besoin
     for i, t in enumerate(page_texts):
-        if force_ocr or len(t) < 40:  # Si le texte est trop court ou si OCR est forcé
+        if force_ocr or len(t) < 40:
             try:
-                if images[i] is not None:  # Vérification de la validité de l'image
-                    ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
-                else:
-                    ocr_t = ""  # Si l'image est vide ou None, on ignore l'OCR
+                ocr_t = norm_spaces(pytesseract.image_to_string(images[i], lang="fra"))
             except Exception:
-                ocr_t = ""  # En cas d'erreur, on met ocr_t à une chaîne vide
-
-            # Si l'OCR a produit plus de texte que l'original, on le remplace
+                ocr_t = ""
             if len(ocr_t) > len(t):
                 page_texts[i] = ocr_t
-            page_ocr[i] = True  # Marquer que l'OCR a été utilisé sur cette page
+            page_ocr[i] = True
 
-    # Rassembler tout le texte extrait
     all_text = "\n".join(page_texts).strip()
-
-    # Vérifier si l'OCR a été utilisé pour au moins une page
     used_ocr_any = any(page_ocr)
-
-    # Retourner les résultats
     return all_text, used_ocr_any, images, page_texts, page_ocr
 
 def validate_uploaded_pdf(page_texts: list[str]) -> tuple[bool, str, dict]:
@@ -1626,147 +1584,259 @@ def build_pdf(fields, comments, fmt_name):
 if uploaded is not None:
     st.success("PDF reçu ✅")
 
-    import hashlib as _hashlib
-    _pdf_bytes = uploaded.getvalue()
-    _pdf_digest = _hashlib.sha256(_pdf_bytes).hexdigest()
+    # Streamlit relance le script à chaque interaction.
+    # Un bouton explicite évite les "PDF reçu mais rien après".
+    if st.button("Analyser le bulletin", type="primary"):
 
-    # On mémorise si la pré-analyse a déjà été faite pour CE fichier (anti re-run inutile)
-    if "precheck_ok_digest" not in st.session_state:
-        st.session_state.precheck_ok_digest = None
+        # ------------------------------------------------------------
 
-    # ------------------------------------------------------------
-    # Étape 1 — Pré-analyse (gratuite) : lisibilité + validation "bulletin"
-    # ------------------------------------------------------------
-    st.markdown("### Étape 1 — Pré-analyse (lisibilité du bulletin)")
-    st.caption("On vérifie que ton fichier ressemble bien à un bulletin (et qu'il est lisible), avant de te demander de payer.")
+        # Anti-rejeu : 1 paiement = 1 analyse (consommation au démarrage)
 
-    if st.button("Lancer la pré-analyse", type="primary"):
-        with st.status("Pré-analyse en cours…", expanded=False) as _pre:
-            _pre.write("Lecture du PDF + extraction texte (OCR si besoin)…")
-            file_obj = io.BytesIO(_pdf_bytes)
-            text_all, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-                file_obj, dpi=DPI, force_ocr=OCR_FORCE
-            )
+        # ------------------------------------------------------------
 
-            _pre.write("Vérification du document…")
-            ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-            if not ok_doc:
-                st.error(msg_doc)
-                if DEBUG:
+        _sid = _get_session_id_for_credit()
+
+        if not _sid:
+            st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
+            st.stop()
+
+        # Sécurité : on vérifie / consomme côté serveur (SQLite). Empêche le bypass au refresh.
+        if credit_is_consumed(_sid):
+            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
+            st.stop()
+
+        # On consomme le crédit AVANT de lancer le travail lourd.
+        if not credit_consume(_sid):
+            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
+            st.stop()
+
+        # UI only
+        st.session_state.analysis_credit_used_for = _sid
+
+        import time
+
+        t0 = time.time()
+
+        status = st.status("Démarrage de l'analyse…", expanded=True)
+
+        status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+
+
+        # Crédit consommé ✅
+        # On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
+        file_obj = io.BytesIO(uploaded.getvalue())
+        text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+
+
+        status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+
+        status.write("2/6 Vérification du document…")
+        ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+        if not ok_doc:
+            status.update(label="Analyse interrompue", state="error")
+            st.error(msg_doc)
+            if DEBUG:
                     st.json(doc_dbg)
-                st.stop()
+            st.stop()
 
-            fmt, fmt_dbg = detect_format(text_all)
-            period, _ = extract_period(text_all)
+        fmt, fmt_dbg = detect_format(text)
 
-            # "Analyse partielle" : on donne juste quelques infos si on les trouve
-            brut, _ = find_last_line_with_amount(
-                text_all,
-                include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
-                exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
-            )
-            net_paye, _ = find_last_line_with_amount(
-                text_all,
-                include_patterns=[r"net\s+paye", r"net\s+pay[ée]", r"net\s+à\s+payer", r"net\s+a\s+payer"],
-                exclude_patterns=[r"avant\s+imp", r"imposable"],
-            )
 
-            _pre.update(label="Pré-analyse terminée", state="complete")
+        status.write(f"✅ Document valide — format détecté: {fmt}")
 
-        st.session_state.precheck_ok_digest = _pdf_digest
-
-        st.success("✅ Bulletin lisible et valide.")
-        st.write(f"• Format détecté : **{fmt}**")
-        if period:
-            st.write(f"• Période : **{period}**")
-        st.write(f"• OCR utilisé : **{used_ocr}**")
-        if brut is not None:
-            st.write(f"• Brut (détecté) : **{eur(brut)}**")
-        if net_paye is not None:
-            st.write(f"• Net payé (détecté) : **{eur(net_paye)}**")
-
-        st.info("➡️ Si tu veux la synthèse complète + PDF, passe au paiement juste en dessous.")
+        status.write("3/6 Extraction des champs principaux…")
 
         if DEBUG:
-            st.json({"fmt_dbg": fmt_dbg})
+            st.write(f"Format détecté : **{fmt}**")
+            st.json({"ocr": used_ocr, **fmt_dbg})
             with st.expander("Texte extrait (début)"):
-                st.text((text_all or "")[:8000])
+                st.text((text or "")[:12000])
 
-    # ------------------------------------------------------------
-    # Étape 2 — Paiement (Stripe) : seulement après pré-analyse OK
-    # ------------------------------------------------------------
-    if st.session_state.precheck_ok_digest == _pdf_digest:
+        # Variables communes
+        period, period_line = extract_period(text)
 
-        st.markdown("### Étape 2 — Paiement (7,50 €)")
-        paid_ok, paid_reason = is_payment_ok()
+        brut, brut_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+            exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+        )
 
-        if not paid_ok and not ALLOW_NO_PAYMENT:
-            st.write("Pour lancer **l'analyse complète** (et générer la synthèse PDF), il faut régler **7,50 €**.")
-            if PAYMENT_LINK:
-                st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
-                st.caption("Après paiement, Stripe te redirige ici avec un `session_id` dans l'URL.")
-            else:
-                st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
-            if DEBUG:
-                st.info(f"[debug] paiement non validé: {paid_reason}")
+        net_paye, net_paye_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+            exclude_patterns=[r"avant\s+imp", r"imposable"],
+        )
 
+        pas, pas_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu", r"pr[ée]l[èe]vement\s+à\s+la\s+source", r"\bpas\b"],
+            exclude_patterns=[r"csg", r"crds", r"deduct", r"non\s+deduct"],
+        )
+
+            # CSG non déductible : sur QUADRA elle peut être sur plusieurs lignes => on additionne
+        if fmt == "QUADRA":
+            csg_nd, csg_nd_line = extract_csg_non_deductible_total(text)
         else:
-            st.success("✅ Paiement validé (ou bypass activé).")
-            st.markdown("### Étape 3 — Analyse complète + synthèse")
-            st.caption("Maintenant on relance l'analyse complète (1 paiement = 1 analyse).")
+            csg_nd, csg_nd_line = find_last_line_with_amount(
+                text,
+                include_patterns=[r"csg.*non\s+d[ée]duct", r"csg\/crds.*non\s+d[ée]duct", r"non\s+d[ée]duct.*imp[oô]t"],
+                exclude_patterns=[],
+            )
 
-            if st.button("Lancer l'analyse complète", type="primary"):
+        # Acompte + net reconstitué (anti-acompte délirant)
+        acompte, acompte_line = extract_acompte(text, net_paye=net_paye, brut=brut)
+        net_reference = round(net_paye + (acompte or 0.0), 2) if net_paye is not None else None
 
-                _sid = _get_session_id_for_credit()
+        # Init
+        charges_sal = None
+        charges_pat = None
+        charges_line = None
+        charges_method = None
+        cout_total = None
+        cout_total_line = None
+        cp = {"cp_n1": None, "cp_n": None, "cp_total": None}
 
-            if not _sid:
-                            st.error("session_id manquant dans l'URL. Reviens depuis la page de succès Stripe (success_url).")
-                            st.stop()
 
-                        # Sécurité : on vérifie / consomme côté serveur (SQLite). Empêche le bypass au refresh.
-            if credit_is_consumed(_sid):
-                            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
-                            st.stop()
+        status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
 
-                        # On consomme le crédit AVANT de lancer le travail lourd.
-            if not credit_consume(_sid):
-                            st.error("🔒 Ce paiement a déjà été utilisé : **1 paiement = 1 analyse**.\n\n➡️ Pour analyser un autre bulletin, repasse par le paiement.")
-                            st.stop()
+        # Extraction par format
+        if fmt == "QUADRA":
+            charges_sal, charges_pat, charges_line, charges_method = extract_charges_quadra(text)
+            cout_total, cout_total_line = extract_total_verse_employeur_quadra(text, brut=brut, net_paye=net_paye)
+            cp = extract_cp_quadra(text)
 
-  # UI only
-st.session_state.analysis_credit_used_for = _sid
+        elif fmt == "SILAE":
+            # charges salariales/patronales : chercher une ligne "total cotisations et contributions"
+            # (si absent dans ton modèle, ça restera None et c'est OK pour tester)
+            lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+            low_lines = [l.lower() for l in lines]
+            for i, ll in enumerate(low_lines):
+                if ("total" in ll) and ("cotis" in ll) and ("contrib" in ll):
+                    vals = extract_amounts_money(lines[i])
+                    if len(vals) >= 2:
+                        charges_sal, charges_pat = vals[0], vals[1]
+                        charges_line = lines[i]
+                        charges_method = "silae_total_cotis_contrib"
+                        break
 
-import time
+            if page_images:
 
-t0 = time.time()
+                idx_page = _choose_silae_page_index(page_images, page_texts)
+                page_img = page_images[idx_page]
+                page_txt = page_texts[idx_page] if page_texts else None
 
-status = st.status("Démarrage de l'analyse…", expanded=True)
+                status.write(f"SILAE : page analysée = {idx_page + 1}/{len(page_images)}…")
+                status.write("SILAE : extraction coût global + congés (optimisée)…")
 
-status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
+                cout_total, cout_total_line, cp, silae_dbg = extract_silae_cost_and_cp(page_img, page_text=page_txt)
 
-# Crédit consommé ✅
-# On copie le fichier uploadé en mémoire pour pouvoir le relire plusieurs fois (seek/open).
-file_obj = io.BytesIO(uploaded.getvalue())
-text, used_ocr, page_images, page_texts, page_ocr_flags = extract_text_auto_per_page(file_obj, dpi=DPI, force_ocr=OCR_FORCE)
+                if DEBUG:
+                    st.json({"silae_debug": silae_dbg, "cout_total_line": cout_total_line})
 
-status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
 
-status.write("2/6 Vérification du document…")
-ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
-if not ok_doc:
-    status.update(label="Analyse interrompue", state="error")
-    st.error(msg_doc)
-    if DEBUG:
-        st.json(doc_dbg)
-    st.stop()
+        # Total organismes sociaux
+        organismes_total = (
+            round((charges_sal or 0.0) + (charges_pat or 0.0) + (csg_nd or 0.0), 2)
+            if (charges_sal is not None or charges_pat is not None or csg_nd is not None)
+            else None
+        )
 
-fmt, fmt_dbg = detect_format(text)
+        # UI synthèse
 
-status.write(f"✅ Document valide — format détecté: {fmt}")
+        status.write("✅ Extraction terminée")
 
-status.write("3/6 Extraction des champs principaux…")
+        status.write("5/6 Affichage de la synthèse…")
 
-if DEBUG:
-    st.write(f"Format détecté : **{fmt}**")
-    st.json({"ocr": used_ocr, **fmt_dbg})
-    wit
+        st.subheader("🎯 L'essentiel, sans jargon")
+
+        col1, col2 = st.columns(2)
+        with col1:
+            st.markdown("### 💸 Ce qui arrive sur ton compte")
+            st.metric("Net payé (reçu)", eur(net_paye))
+            if acompte and acompte > 0:
+                st.metric("Acompte déjà versé", eur(acompte))
+                st.metric("Net reconstitué", eur(net_reference))
+            st.metric("Impôt (PAS)", eur(pas))
+
+        with col2:
+            st.markdown("### 💼 D'où ça part")
+            st.metric("Brut", eur(brut))
+            st.metric("Cotisations salariales", eur(charges_sal))
+            st.metric("CSG non déductible", eur(csg_nd))
+
+        st.markdown("---")
+
+        col3, col4 = st.columns(2)
+        with col3:
+            st.markdown("### 🏗️ Côté employeur")
+            st.metric("Cotisations patronales", eur(charges_pat))
+            st.metric("Organismes sociaux (total)", eur(organismes_total))
+            st.metric("Coût total employeur (référence bulletin)", eur(cout_total))
+
+        with col4:
+            st.markdown("### 🌴 Congés disponibles (solde)")
+            if cp.get("cp_total") is not None:
+                st.metric("CP N-1 (solde)", f"{cp.get('cp_n1'):.2f} j" if cp.get("cp_n1") is not None else "-")
+                st.metric("CP N (solde)", f"{cp.get('cp_n'):.2f} j" if cp.get("cp_n") is not None else "-")
+                st.metric("Total", f"{cp.get('cp_total'):.2f} j")
+            else:
+                st.info("Congés : non lisibles automatiquement sur ce PDF.")
+
+        st.subheader("😄 Ce qu'il faut retenir")
+        comments = build_comments(brut, charges_sal, csg_nd, pas, charges_pat, acompte)
+        for cmt in comments:
+            st.write(cmt)
+
+        # PDF export
+        fields = {
+            "period": period,
+            "brut": brut,
+            "net_paye": net_paye,
+            "net_reference": net_reference,
+            "acompte": acompte,
+            "pas": pas,
+            "charges_sal": charges_sal,
+            "charges_pat": charges_pat,
+            "csg_non_deductible": csg_nd,
+            "organismes_total": organismes_total,
+            "cout_total": cout_total,
+            "cp": cp,
+        }
+
+        pdf_buf = build_pdf(fields, comments, fmt_name=fmt)
+
+
+        status.write("6/6 Génération du PDF de synthèse…")
+
+        status.update(label=f"Analyse terminée en {time.time()-t0:.1f}s", state="complete")
+
+        st.download_button(
+            "⬇️ Télécharger la synthèse PDF",
+            data=pdf_buf.getvalue(),
+            file_name="synthese_bulletin_particulier.pdf",
+            mime="application/pdf",
+        )
+
+        # Debug
+        if DEBUG:
+            st.subheader("🔧 Debug (lignes sources)")
+            st.json(
+                {
+                    "format": fmt,
+                    "ocr_used": used_ocr,
+                    "period_line": period_line,
+                    "brut_line": brut_line,
+                    "net_paye_line": net_paye_line,
+                    "pas_line": pas_line,
+                    "csg_nd_line": csg_nd_line,
+                    "acompte_line": acompte_line,
+                    "charges_line": charges_line,
+                    "charges_method": charges_method,
+                    "cout_total_line": cout_total_line,
+                    "cp": cp,
+                    "fmt_dbg": fmt_dbg,
+                }
+            )
+
+else:
+    st.info("En attente d'un PDF…")
