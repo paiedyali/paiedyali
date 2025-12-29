@@ -21,23 +21,6 @@ from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 
-# Import des bibliothèques
-import io
-import re
-import datetime as dt
-import os
-
-import streamlit as st
-import pdfplumber
-import pytesseract
-from pytesseract import Output
-
-from reportlab.lib.pagesizes import A4
-from reportlab.lib.units import cm
-from reportlab.lib import colors
-from reportlab.pdfgen import canvas
-
-
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
@@ -66,6 +49,145 @@ st.markdown(
 )
 
 DEBUG = st.checkbox("Mode debug", value=False)
+
+# ------------------------------------------------------------
+# Paiement (Stripe) — mode SaaS 7,50 €
+# ------------------------------------------------------------
+PRICE_EUR = 7.50
+PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "").strip()  # ex: https://buy.stripe.com/...
+ALLOW_NO_PAYMENT = os.getenv("ALLOW_NO_PAYMENT", "false").lower() == "true"
+
+# ------------------------------------------------------------
+# Helpers Stripe
+# ------------------------------------------------------------
+def _get_query_param(name: str):
+    """Compat Streamlit: query_params (>=1.32) ou experimental_get_query_params (ancien)."""
+    if hasattr(st, "query_params"):
+        return st.query_params.get(name)
+    qp = st.experimental_get_query_params()
+    v = qp.get(name)
+    if isinstance(v, list):
+        return v[0] if v else None
+    return v
+
+
+def is_payment_ok() -> tuple[bool, str]:
+    """
+    Vérifie le paiement via session_id dans l'URL.
+    IMPORTANT: on ne bloque plus l'UI avant upload; on s'en sert pour déverrouiller l'analyse complète.
+    """
+    if ALLOW_NO_PAYMENT:
+        return True, "bypass"
+
+    session_id = _get_query_param("session_id") or _get_query_param("checkout_session_id")
+    if not session_id:
+        return False, "missing_session_id"
+
+    secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not secret_key:
+        return False, "missing_STRIPE_SECRET_KEY"
+
+    try:
+        import stripe  # lazy import
+        stripe.api_key = secret_key
+        s = stripe.checkout.Session.retrieve(session_id)
+
+        payment_status = getattr(s, "payment_status", None)
+        status = getattr(s, "status", None)
+
+        paid = (payment_status == "paid") and (status in ("complete", "paid", None))
+        return bool(paid), "paid" if paid else "not_paid"
+    except Exception as e:
+        return False, f"stripe_error:{type(e).__name__}"
+
+
+# ------------------------------------------------------------
+# STATE MACHINE (nouveau flow)
+# PRECHECK -> NEED_PAYMENT -> FULL_ANALYSIS
+# ------------------------------------------------------------
+if "step" not in st.session_state:
+    st.session_state.step = "PRECHECK"
+
+if "uploaded_pdf_bytes" not in st.session_state:
+    st.session_state.uploaded_pdf_bytes = None
+
+# Si l'utilisateur revient de Stripe avec session_id payée, on déverrouille FULL_ANALYSIS
+paid_ok, paid_reason = is_payment_ok()
+if paid_ok and st.session_state.step in ("PRECHECK", "NEED_PAYMENT"):
+    st.session_state.step = "FULL_ANALYSIS"
+
+# Upload accessible tout le temps
+uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+
+# ------------------------------------------------------------
+# Étape 1 : PRECHECK (gratuit) — tu brancheras ici ton analyse partielle
+# ------------------------------------------------------------
+if st.session_state.step == "PRECHECK":
+    st.info("Étape 1/2 : vérification de lisibilité (gratuite).")
+
+    if uploaded is None:
+        st.stop()
+
+    if st.button("Vérifier la lisibilité", type="primary"):
+    # 1) On garde le PDF en mémoire
+    st.session_state.uploaded_pdf_bytes = uploaded.getvalue()
+
+    # 2) On crée un "fichier" à partir des bytes
+    file_obj = io.BytesIO(st.session_state.uploaded_pdf_bytes)
+
+    # 3) Extraction texte + OCR auto (rapide)
+    text, used_ocr, images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+        file_obj, dpi=250, force_ocr=False
+    )
+
+    # 4) Vérification : est-ce lisible ? est-ce un bulletin ?
+    ok, msg, dbg = validate_uploaded_pdf(page_texts)
+    if not ok:
+        st.error(msg)
+        if DEBUG:
+            st.json(dbg)
+        st.stop()
+
+    # 5) Détection Quadra / SILAE (info utilisateur)
+    fmt, fmt_dbg = detect_format(text)
+    st.success(f"✅ Bulletin lisible. Format détecté : {fmt}")
+
+    if DEBUG:
+        st.json({
+            "used_ocr": used_ocr,
+            **fmt_dbg,
+            **dbg,
+        })
+
+    # 6) Tout est OK → on demande le paiement
+    st.session_state.step = "NEED_PAYMENT"
+    st.stop()
+
+
+# ------------------------------------------------------------
+# Étape 2 : Paiement
+# ------------------------------------------------------------
+if st.session_state.step == "NEED_PAYMENT":
+    st.markdown(f"## Vérification — {PRICE_EUR:.2f} €")
+    st.write(f"Pour lancer l’analyse complète, une vérification coûte **{PRICE_EUR:.2f} €** (paiement unique).")
+
+    if PAYMENT_LINK:
+        st.link_button(f"Payer {PRICE_EUR:.2f} €", PAYMENT_LINK, type="primary")
+        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
+    else:
+        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
+
+    if DEBUG:
+        st.info(f"[debug] step=NEED_PAYMENT / paid_ok={paid_ok} / reason={paid_reason}")
+
+    st.stop()
+
+# ------------------------------------------------------------
+# À partir d'ici : FULL_ANALYSIS
+# (On ne stoppe plus ici : le reste du fichier peut continuer)
+# ------------------------------------------------------------
+if DEBUG:
+    st.info(f"[debug] step={st.session_state.step} / paid_ok={paid_ok} / reason={paid_reason}")
 
 # --- STATE MACHINE (à mettre après la config UI) ---
 if "step" not in st.session_state:
@@ -119,70 +241,6 @@ if st.session_state.step == "NEED_PAYMENT":
         st.error("Paiement non configuré : STRIPE_PAYMENT_LINK manquante.")
 
     # Si l’utilisateur revient avec session_id payé, step passera à FULL_ANALYSIS via le bloc paid_ok plus haut.
-    st.stop()
-
-
-# ------------------------------------------------------------
-# Paiement (Stripe) — mode SaaS 7,50 €
-# ------------------------------------------------------------
-PRICE_EUR = 7.50
-PAYMENT_LINK = os.getenv("STRIPE_PAYMENT_LINK", "").strip()  # ex: https://buy.stripe.com/...
-ALLOW_NO_PAYMENT = os.getenv("ALLOW_NO_PAYMENT", "false").lower() == "true"
-
-# ------------------------------------------------------------
-# OPTION (recommandé en prod) : Webhook Stripe (anti-fraude 'béton')
-#
-# Le principe :
-# 1) Stripe appelle ton serveur (endpoint webhook) sur checkout.session.completed
-# 2) Ton serveur enregistre en base : session_id -> credit=1 (non consommé)
-# 3) L'app Streamlit appelle ton serveur pour vérifier/consommer un crédit
-#
-# Dans Streamlit (ici), tu peux remplacer is_payment_ok() + session_state par :
-#   - GET  /api/credits?session_id=...  -> {credits: 1}
-#   - POST /api/consume?session_id=... -> {ok: true}
-#
-# Avantage : 1 paiement = 1 analyse même si l'utilisateur change de navigateur/appareil.
-# ------------------------------------------------------------
-
-def _get_query_param(name: str):
-    """Compat Streamlit: query_params (>=1.32) ou experimental_get_query_params (ancien)."""
-    if hasattr(st, "query_params"):
-        return st.query_params.get(name)
-    qp = st.experimental_get_query_params()
-    v = qp.get(name)
-    if isinstance(v, list):
-        return v[0] if v else None
-    return v
-
-def is_payment_ok() -> tuple[bool, str]:
-    if ALLOW_NO_PAYMENT:
-        return True, "bypass"
-    session_id = _get_query_param("session_id") or _get_query_param("checkout_session_id")
-    if not session_id:
-        return False, "missing_session_id"
-    secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
-    if not secret_key:
-        return False, "missing_STRIPE_SECRET_KEY"
-    try:
-        import stripe  # lazy import
-        stripe.api_key = secret_key
-        s = stripe.checkout.Session.retrieve(session_id)
-        paid = (getattr(s, "payment_status", None) == "paid") and (getattr(s, "status", None) in ("complete", "paid", None))
-        return bool(paid), "paid" if paid else "not_paid"
-    except Exception as e:
-        return False, f"stripe_error:{type(e).__name__}"
-
-paid_ok, paid_reason = is_payment_ok()
-if not paid_ok:
-    st.markdown("## Vérification — 7,50 €")
-    st.write("Pour analyser votre bulletin, une vérification coûte **7,50 €** (paiement unique).")
-    if PAYMENT_LINK:
-        st.link_button("Payer 7,50 €", PAYMENT_LINK, type="primary")
-        st.caption("Après paiement, vous serez redirigé ici automatiquement.")
-    else:
-        st.error("Paiement non configuré : variable d'environnement STRIPE_PAYMENT_LINK manquante.")
-    if DEBUG:
-        st.info(f"[debug] accès refusé: {paid_reason}")
     st.stop()
 
 # ------------------------------------------------------------
@@ -397,26 +455,135 @@ def ocr_pdf_to_text(file, dpi=250, lang="fra") -> str:
     return "\n".join(out)
 
 
+def _safe_norm_pipeline(text: str) -> str:
+    """
+    Sécurise ton pipeline de normalisation si certaines fonctions sont déclarées plus bas.
+    (Idéalement, garde ces fonctions AU-DESSUS de ce bloc.)
+    """
+    if not text:
+        return ""
+    for fn_name in ("fix_doubled_letters", "normalize_doubled_digits_in_dates", "norm_spaces"):
+        fn = globals().get(fn_name)
+        if callable(fn):
+            text = fn(text)
+    return text
+
+
 def extract_text_auto(file, dpi=250, force_ocr=False):
     # IMPORTANT: le fichier est relu plusieurs fois (pdfplumber, conversion images, OCR)
-    # => toujours remettre le curseur au début avant chaque lecture
     file.seek(0)
     classic = ""
     with pdfplumber.open(file) as pdf:
         for p in pdf.pages:
             classic += (p.extract_text() or "") + "\n"
-    classic = norm_spaces(normalize_doubled_digits_in_dates(fix_doubled_letters(classic)))
+
+    classic = _safe_norm_pipeline(classic)
 
     file.seek(0)
     images = pdf_to_page_images(file, dpi=dpi)
 
-    if force_ocr or len(classic) < 80:
+    if force_ocr or len(classic.strip()) < 80:
         file.seek(0)
-        ocr_txt = ocr_pdf_to_text(file, dpi=dpi, lang="fra")
-        ocr_txt = norm_spaces(ocr_txt)
+        try:
+            ocr_txt = ocr_pdf_to_text(file, dpi=dpi, lang="fra")
+        except Exception as e:
+            # erreur claire si tesseract/ocr casse
+            raise RuntimeError(f"OCR échoué ({type(e).__name__}). Vérifie Tesseract/lang fra.") from e
+
+        ocr_txt = _safe_norm_pipeline(ocr_txt)
         return ocr_txt, True, images
 
     return classic, False, images
+
+
+def extract_text_auto_per_page(file, dpi=250, force_ocr=False):
+    """
+    Version par page: utile pour le pré-check lisibilité.
+    Retour:
+      - full_text
+      - used_ocr (bool global)
+      - images (list PIL)
+      - page_texts (list[str])
+      - page_ocr_flags (list[bool])  # si OCR a été utilisé sur la page
+    """
+    file.seek(0)
+    page_texts = []
+    page_ocr_flags = []
+
+    # extraction classique par page
+    with pdfplumber.open(file) as pdf:
+        for p in pdf.pages:
+            t = p.extract_text() or ""
+            t = _safe_norm_pipeline(t)
+            page_texts.append(t)
+            page_ocr_flags.append(False)
+
+    full_text = "\n".join(page_texts).strip()
+
+    # images (une fois)
+    file.seek(0)
+    images = pdf_to_page_images(file, dpi=dpi)
+
+    # OCR global si forcé ou trop peu de texte
+    if force_ocr or len(full_text) < 80:
+        used_ocr = True
+        ocr_page_texts = []
+        try:
+            for im in images:
+                t = pytesseract.image_to_string(im, lang="fra")
+                t = _safe_norm_pipeline(t)
+                ocr_page_texts.append(t)
+        except Exception as e:
+            raise RuntimeError(f"OCR échoué ({type(e).__name__}). Vérifie Tesseract/lang fra.") from e
+
+        page_texts = ocr_page_texts
+        page_ocr_flags = [True] * len(images)
+        full_text = "\n".join(page_texts).strip()
+        return full_text, True, images, page_texts, page_ocr_flags
+
+    return full_text, False, images, page_texts, page_ocr_flags
+
+
+# ------------------------------------------------------------
+# Pré-check : validation lisibilité / "est-ce un bulletin ?"
+# ------------------------------------------------------------
+def validate_uploaded_pdf(page_texts: list[str]):
+    """
+    Objectif: décider AVANT paiement si le bulletin est exploitable.
+    On veut être tolérant, mais éviter:
+      - PDF vide
+      - scans illisibles (0 texte même après OCR -> ce sera géré par l'appelant)
+      - documents qui ne ressemblent pas du tout à un bulletin
+    """
+    dbg = {
+        "pages": len(page_texts),
+        "chars_by_page": [len((t or "").strip()) for t in page_texts],
+    }
+
+    if not page_texts:
+        return False, "PDF invalide (0 page détectée).", dbg
+
+    total_chars = sum(dbg["chars_by_page"])
+    dbg["total_chars"] = total_chars
+
+    # seuil “lisibilité” (à ajuster, mais bon point de départ)
+    if total_chars < 120:
+        return False, "PDF trop peu lisible (pas assez de texte détecté). Essaye un PDF non flouté ou un scan plus net.", dbg
+
+    # heuristique “bulletin”
+    joined = " ".join((t or "").lower() for t in page_texts)
+    keywords = [
+        "bulletin", "salaire", "paie", "net", "brut", "cotisation", "urssaf",
+        "heures", "cong", "csg", "crds", "siret", "matricule",
+    ]
+    hits = [k for k in keywords if k in joined]
+    dbg["keyword_hits"] = hits
+    dbg["keyword_hit_count"] = len(hits)
+
+    if len(hits) < 2:
+        return False, "Ce document ne ressemble pas à un bulletin de paie (mots-clés insuffisants).", dbg
+
+    return True, "ok", dbg
 
 
 # ------------------------------------------------------------
