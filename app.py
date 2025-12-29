@@ -117,7 +117,12 @@ if paid_ok and st.session_state.step in ("PRECHECK", "NEED_PAYMENT"):
     st.session_state.step = "FULL_ANALYSIS"
 
 # Upload accessible tout le temps
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+uploaded = st.file_uploader(
+    "Dépose ton bulletin de salaire (PDF)",
+    type=["pdf"],
+    key="uploader_main"
+)
+
 
 # ------------------------------------------------------------
 # Étape 1 : PRECHECK (gratuit) — tu brancheras ici ton analyse partielle
@@ -203,8 +208,6 @@ if paid_ok:
     if st.session_state.step in ("PRECHECK", "NEED_PAYMENT"):
         st.session_state.step = "FULL_ANALYSIS"
 
-# 2) Upload accessible tout le temps
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
 
 # 3) Étape PRECHECK : vérifier lisibilité/validité sans paiement
 if st.session_state.step == "PRECHECK":
@@ -319,7 +322,6 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
 # ------------------------------------------------------------
 OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
 DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
 # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
