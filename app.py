@@ -1820,26 +1820,29 @@ elif st.session_state.get("uploaded_buffer"):
     if st.session_state.get("partial_text"):
         st.markdown("### Résultat de l'analyse partielle (en session)")
         st.write(f"OCR utilisé : {st.session_state.get('used_ocr_partial')}")
-        # Estimation rapide : brut / net (extraction depuis le texte partiel)
-brut_est, brut_line = find_last_line_with_amount(
-    st.session_state.get("partial_text", "") or text_partial,
-    include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
-    exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
-)
-net_est, net_line = find_last_line_with_amount(
-    st.session_state.get("partial_text", "") or text_partial,
-    include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
-    exclude_patterns=[r"avant\s+imp", r"imposable"],
-)
 
-st.markdown("### Estimation rapide")
-col_a, col_b = st.columns(2)
-with col_a:
-    st.write("Salaire brut (est.)")
-    st.metric("", eur(brut_est))
-with col_b:
-    st.write("Net payé (est.)")
-    st.metric("", eur(net_est))
+        # Estimation rapide : brut / net (extraction depuis le texte partiel)
+        partial_text_val = st.session_state.get("partial_text", "")
+
+        brut_est, brut_line = find_last_line_with_amount(
+            partial_text_val,
+            include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+            exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+        )
+        net_est, net_line = find_last_line_with_amount(
+            partial_text_val,
+            include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+            exclude_patterns=[r"avant\s+imp", r"imposable"],
+        )
+
+        st.markdown("### Estimation rapide")
+        col_a, col_b = st.columns(2)
+        with col_a:
+            st.write("Salaire brut (est.)")
+            st.metric("", eur(brut_est))
+        with col_b:
+            st.write("Net payé (est.)")
+            st.metric("", eur(net_est))
 
 # Optionnel : si tu veux garder un petit aperçu texte (moins verbeux), décommente :
 # with st.expander("Aperçu (extrait court)"):
