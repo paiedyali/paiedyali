@@ -133,40 +133,41 @@ if st.session_state.step == "PRECHECK":
     if uploaded is None:
         st.stop()
 
-if st.button("Vérifier la lisibilité", type="primary"):
-    # 1) On garde le PDF en mémoire
-    st.session_state.uploaded_pdf_bytes = uploaded.getvalue()
+    if st.button("Vérifier la lisibilité", type="primary"):
+        # 1) On garde le PDF en mémoire
+        st.session_state.uploaded_pdf_bytes = uploaded.getvalue()
 
-    # 2) On crée un "fichier" à partir des bytes
-    file_obj = io.BytesIO(st.session_state.uploaded_pdf_bytes)
+        # 2) On crée un "fichier" à partir des bytes
+        file_obj = io.BytesIO(st.session_state.uploaded_pdf_bytes)
 
-    # 3) Extraction texte + OCR auto (rapide)
-    text, used_ocr, images, page_texts, page_ocr_flags = extract_text_auto_per_page(
-        file_obj, dpi=250, force_ocr=False
-    )
+        # 3) Extraction texte + OCR auto (rapide)
+        text, used_ocr, images, page_texts, page_ocr_flags = extract_text_auto_per_page(
+            file_obj, dpi=250, force_ocr=False
+        )
 
-    # 4) Vérification : est-ce lisible ? est-ce un bulletin ?
-    ok, msg, dbg = validate_uploaded_pdf(page_texts)
-    if not ok:
-        st.error(msg)
+        # 4) Vérification : est-ce lisible ? est-ce un bulletin ?
+        ok, msg, dbg = validate_uploaded_pdf(page_texts)
+        if not ok:
+            st.error(msg)
+            if DEBUG:
+                st.json(dbg)
+            st.stop()
+
+        # 5) Détection Quadra / SILAE (info utilisateur)
+        fmt, fmt_dbg = detect_format(text)
+        st.success(f"✅ Bulletin lisible. Format détecté : {fmt}")
+
         if DEBUG:
-            st.json(dbg)
+            st.json({
+                "used_ocr": used_ocr,
+                **fmt_dbg,
+                **dbg,
+            })
+
+        # 6) Tout est OK → on demande le paiement
+        st.session_state.step = "NEED_PAYMENT"  # Après la vérification gratuite, passe à l'étape de paiement
         st.stop()
 
-    # 5) Détection Quadra / SILAE (info utilisateur)
-    fmt, fmt_dbg = detect_format(text)
-    st.success(f"✅ Bulletin lisible. Format détecté : {fmt}")
-
-    if DEBUG:
-        st.json({
-            "used_ocr": used_ocr,
-            **fmt_dbg,
-            **dbg,
-        })
-
-    # 6) Tout est OK → on demande le paiement
-    st.session_state.step = "NEED_PAYMENT"
-    st.stop()
 
 
 # ------------------------------------------------------------
@@ -187,26 +188,26 @@ if st.session_state.step == "NEED_PAYMENT":
 
     st.stop()
 
+
 # ------------------------------------------------------------
 # À partir d'ici : FULL_ANALYSIS
-# (On ne stoppe plus ici : le reste du fichier peut continuer)
 # ------------------------------------------------------------
-if DEBUG:
-    st.info(f"[debug] step={st.session_state.step} / paid_ok={paid_ok} / reason={paid_reason}")
+if st.session_state.step == "FULL_ANALYSIS":
+    # Vérifier si le paiement a été effectué
+    paid_ok, paid_reason = is_payment_ok()
+    
+    if paid_ok:
+        st.info("Le paiement a été confirmé. L'analyse complète du bulletin commence.")
+        
+        # Effectuer l'analyse complète ici (par exemple, en appelant une fonction `full_bulletin_analysis`)
+        result = full_bulletin_analysis(st.session_state.uploaded_pdf_bytes)
+        
+        st.success("Analyse complète terminée.")
+        st.write(result)  # Afficher les résultats complets de l'analyse
+        
+    else:
+        st.error("Le paiement n'a pas été validé. Vous ne pouvez pas accéder à l'analyse complète.")
 
-# --- STATE MACHINE (à mettre après la config UI) ---
-if "step" not in st.session_state:
-    st.session_state.step = "PRECHECK"   # PRECHECK -> NEED_PAYMENT -> FULL_ANALYSIS -> DONE
-
-if "uploaded_pdf_bytes" not in st.session_state:
-    st.session_state.uploaded_pdf_bytes = None  # permet de garder le PDF entre étapes (même navigateur)
-
-# 1) On lit l'URL (retour Stripe éventuel)
-paid_ok, paid_reason = is_payment_ok()
-if paid_ok:
-    # si Stripe OK, on autorise l'analyse complète
-    if st.session_state.step in ("PRECHECK", "NEED_PAYMENT"):
-        st.session_state.step = "FULL_ANALYSIS"
 
 
 # 3) Étape PRECHECK : vérifier lisibilité/validité sans paiement
