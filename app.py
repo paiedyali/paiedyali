@@ -1844,7 +1844,8 @@ with col_b:
 # Optionnel : si tu veux garder un petit aperçu texte (moins verbeux), décommente :
 # with st.expander("Aperçu (extrait court)"):
 #     st.text((st.session_state.get("partial_text") or text_partial or "")[:800])
-        if DEBUG:
+
+    if DEBUG:
             with st.expander("Debug - partial details"):
                 st.json(st.session_state.get("partial_dbg"))
 
