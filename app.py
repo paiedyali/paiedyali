@@ -1739,7 +1739,7 @@ if uploaded is not None:
         st.session_state["uploaded_name"] = uploaded.name
 
         st.success("Paiement détecté ✅ — tu as payé pour une analyse complète.")
-        if st.button("Lancer l'analyse complète (après paiement)", type="primary"):
+        if st.button("Lancer l'analyse complète", type="primary"):
             # consume credit now (idempotent)
             if not credit_consume(session_id):
                 st.error("🔒 Impossible de consommer le crédit (déjà consommé).")
@@ -1861,7 +1861,7 @@ if session_id and payment_ok:
         # If there's an uploaded buffer in session (user re-uploaded earlier), show launch full analysis button
         if st.session_state.get("uploaded_buffer"):
             st.success("Paiement confirmé — tu peux lancer l'analyse complète ci-dessous.")
-            if st.button("Lancer l'analyse complète (après paiement)", type="primary"):
+            if st.button("Lancer l'analyse complète", type="primary"):
                 if not credit_consume(session_id):
                     st.error("🔒 Impossible de consommer le crédit (déjà consommé).")
                     st.stop()
