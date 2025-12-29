@@ -1882,7 +1882,7 @@ if session_id and payment_ok:
         else:
             # No buffer: instruct to upload the bulletin again to launch full analysis
             st.success("Paiement reçu ✅")
-            st.info("Téléverse à nouveau le bulletin que tu as payé pour lancer l'analyse complète.")
+            st.info("Nous ne conservons aucun bulletin — vous devrez le téléverser à nouveau après paiement.")
             # Do NOT show payment button here (already paid)
 
 # If user hasn't paid (or payment not confirmed) - show payment CTA only when partial_ok is True
