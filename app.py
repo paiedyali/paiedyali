@@ -128,7 +128,7 @@ if st.session_state.step == "PRECHECK":
     if uploaded is None:
         st.stop()
 
-    if st.button("Vérifier la lisibilité", type="primary"):
+if st.button("Vérifier la lisibilité", type="primary"):
     # 1) On garde le PDF en mémoire
     st.session_state.uploaded_pdf_bytes = uploaded.getvalue()
 
