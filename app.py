@@ -1481,7 +1481,222 @@ def build_pdf(fields, comments, fmt_name):
     buf.seek(0)
     return buf
 
+def run_full_analysis(file_obj: io.BytesIO, dpi_full: int, used_ocr_partial: bool = False, partial_text: str | None = None, page_images=None, page_texts=None, page_ocr_flags=None):
+    """
+    Exécute l'analyse complète (haute qualité) et génère la synthèse PDF.
+    Retourne (pdf_buf, fields, comments, debug_info) — et affiche l'UI Streamlit.
+    """
+    import time
+    t0 = time.time()
+    status = st.status("Démarrage de l'analyse complète…", expanded=True)
+    status.write("1/6 Lecture du PDF + extraction texte (OCR si besoin)…")
 
+    # relire le fichier
+    file_obj.seek(0)
+    # réutiliser l'extraction partielle si fournie, sinon relire
+    if (partial_text is None) or (page_texts is None):
+        text, used_ocr, page_images2, page_texts2, page_ocr_flags2 = extract_text_auto_per_page(file_obj, dpi=dpi_full, force_ocr=OCR_FORCE)
+        page_images = page_images2
+        page_texts = page_texts2
+        page_ocr_flags = page_ocr_flags2
+    else:
+        text = partial_text
+        used_ocr = used_ocr_partial
+
+    status.write(f"✅ Texte extrait (OCR utilisé: {used_ocr})")
+
+    status.write("2/6 Vérification du document…")
+    ok_doc, msg_doc, doc_dbg = validate_uploaded_pdf(page_texts)
+    if not ok_doc:
+        status.update(label="Analyse interrompue", state="error")
+        st.error(msg_doc)
+        if DEBUG:
+            st.json(doc_dbg)
+        return None, None, None, {"error": "doc_invalid", "doc_dbg": doc_dbg}
+
+    fmt, fmt_dbg = detect_format(text)
+    status.write(f"✅ Document valide — format détecté: {fmt}")
+
+    status.write("3/6 Extraction des champs principaux…")
+
+    if DEBUG:
+        st.write(f"Format détecté : **{fmt}**")
+        st.json({"ocr": used_ocr, **fmt_dbg})
+        with st.expander("Texte extrait (début)"):
+            st.text((text or "")[:12000])
+
+    # Variables communes
+    period, period_line = extract_period(text)
+
+    brut, brut_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+        exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+    )
+
+    net_paye, net_paye_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+        exclude_patterns=[r"avant\s+imp", r"imposable"],
+    )
+
+    pas, pas_line = find_last_line_with_amount(
+        text,
+        include_patterns=[r"imp[oô]t\s+sur\s+le\s+revenu", r"pr[ée]l[èe]vement\s+à\s+la\s+source", r"\bpas\b"],
+        exclude_patterns=[r"csg", r"crds", r"deduct", r"non\s+deduct"],
+    )
+
+    if fmt == "QUADRA":
+        csg_nd, csg_nd_line = extract_csg_non_deductible_total(text)
+    else:
+        csg_nd, csg_nd_line = find_last_line_with_amount(
+            text,
+            include_patterns=[r"csg.*non\s+d[ée]duct", r"csg\/crds.*non\s+d[ée]duct", r"non\s+d[ée]duct.*imp[oô]t"],
+            exclude_patterns=[],
+        )
+
+    acompte, acompte_line = extract_acompte(text, net_paye=net_paye, brut=brut)
+    net_reference = round(net_paye + (acompte or 0.0), 2) if net_paye is not None else None
+
+    charges_sal = None
+    charges_pat = None
+    charges_line = None
+    charges_method = None
+    cout_total = None
+    cout_total_line = None
+    cp = {"cp_n1": None, "cp_n": None, "cp_total": None}
+
+    status.write("4/6 Extraction spécifique au format (QUADRA / SILAE)…")
+
+    if fmt == "QUADRA":
+        charges_sal, charges_pat, charges_line, charges_method = extract_charges_quadra(text)
+        cout_total, cout_total_line = extract_total_verse_employeur_quadra(text, brut=brut, net_paye=net_paye)
+        cp = extract_cp_quadra(text)
+
+    elif fmt == "SILAE":
+        lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+        low_lines = [l.lower() for l in lines]
+        for i, ll in enumerate(low_lines):
+            if ("total" in ll) and ("cotis" in ll) and ("contrib" in ll):
+                vals = extract_amounts_money(lines[i])
+                if len(vals) >= 2:
+                    charges_sal, charges_pat = vals[0], vals[1]
+                    charges_line = lines[i]
+                    charges_method = "silae_total_cotis_contrib"
+                    break
+
+        if page_images:
+            idx_page = _choose_silae_page_index(page_images, page_texts)
+            page_img = page_images[idx_page]
+            page_txt = page_texts[idx_page] if page_texts else None
+
+            status.write(f"SILAE : page analysée = {idx_page + 1}/{len(page_images)}…")
+            status.write("SILAE : extraction coût global + congés (optimisée)…")
+
+            cout_total, cout_total_line, cp, silae_dbg = extract_silae_cost_and_cp(page_img, page_text=page_txt)
+
+            if DEBUG:
+                st.json({"silae_debug": silae_dbg, "cout_total_line": cout_total_line})
+
+    organismes_total = (
+        round((charges_sal or 0.0) + (charges_pat or 0.0) + (csg_nd or 0.0), 2)
+        if (charges_sal is not None or charges_pat is not None or csg_nd is not None)
+        else None
+    )
+
+    status.write("✅ Extraction terminée")
+    status.write("5/6 Affichage de la synthèse…")
+
+    st.subheader("🎯 L'essentiel, sans jargon")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### 💸 Ce qui arrive sur ton compte")
+        st.metric("Net payé (reçu)", eur(net_paye))
+        if acompte and acompte > 0:
+            st.metric("Acompte déjà versé", eur(acompte))
+            st.metric("Net reconstitué", eur(net_reference))
+        st.metric("Impôt (PAS)", eur(pas))
+
+    with col2:
+        st.markdown("### 💼 D'où ça part")
+        st.metric("Brut", eur(brut))
+        st.metric("Cotisations salariales", eur(charges_sal))
+        st.metric("CSG non déductible", eur(csg_nd))
+
+    st.markdown("---")
+
+    col3, col4 = st.columns(2)
+    with col3:
+        st.markdown("### 🏗️ Côté employeur")
+        st.metric("Cotisations patronales", eur(charges_pat))
+        st.metric("Organismes sociaux (total)", eur(organismes_total))
+        st.metric("Coût total employeur (référence bulletin)", eur(cout_total))
+
+    with col4:
+        st.markdown("### 🌴 Congés disponibles (solde)")
+        if cp.get("cp_total") is not None:
+            st.metric("CP N-1 (solde)", f"{cp.get('cp_n1'):.2f} j" if cp.get("cp_n1") is not None else "-")
+            st.metric("CP N (solde)", f"{cp.get('cp_n'):.2f} j" if cp.get("cp_n") is not None else "-")
+            st.metric("Total", f"{cp.get('cp_total'):.2f} j")
+        else:
+            st.info("Congés : non lisibles automatiquement sur ce PDF.")
+
+    st.subheader("😄 Ce qu'il faut retenir")
+    comments = build_comments(brut, charges_sal, csg_nd, pas, charges_pat, acompte)
+    for cmt in comments:
+        st.write(cmt)
+
+    # PDF export
+    fields = {
+        "period": period,
+        "brut": brut,
+        "net_paye": net_paye,
+        "net_reference": net_reference,
+        "acompte": acompte,
+        "pas": pas,
+        "charges_sal": charges_sal,
+        "charges_pat": charges_pat,
+        "csg_non_deductible": csg_nd,
+        "organismes_total": organismes_total,
+        "cout_total": cout_total,
+        "cp": cp,
+    }
+
+    pdf_buf = build_pdf(fields, comments, fmt_name=fmt)
+
+    status.write("6/6 Génération du PDF de synthèse…")
+    status.update(label=f"Analyse terminée en {time.time()-t0:.1f}s", state="complete")
+
+    st.download_button(
+        "⬇️ Télécharger la synthèse PDF",
+        data=pdf_buf.getvalue(),
+        file_name="synthese_bulletin_particulier.pdf",
+        mime="application/pdf",
+    )
+
+    # Debug
+    if DEBUG:
+        st.subheader("🔧 Debug (lignes sources)")
+        st.json(
+            {
+                "format": fmt,
+                "ocr_used": used_ocr,
+                "period_line": period_line,
+                "brut_line": brut_line,
+                "net_paye_line": net_paye_line,
+                "pas_line": pas_line,
+                "csg_nd_line": csg_nd_line,
+                "acompte_line": acompte_line,
+                "charges_line": charges_line,
+                "charges_method": charges_method,
+                "cout_total_line": cout_total_line,
+                "cp": cp,
+                "fmt_dbg": fmt_dbg,
+            }
+        )
+
+    return pdf_buf, fields, comments, {"time": time.time() - t0}
 # ------------------------------------------------------------
 # MAIN UI flow (corrections demandées)
 # ------------------------------------------------------------
