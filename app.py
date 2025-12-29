@@ -1845,10 +1845,9 @@ with col_b:
 # with st.expander("Aperçu (extrait court)"):
 #     st.text((st.session_state.get("partial_text") or text_partial or "")[:800])
 
-    if DEBUG:
-            with st.expander("Debug - partial details"):
-                st.json(st.session_state.get("partial_dbg"))
-
+   if DEBUG:
+    with st.expander("Debug - partial details"):
+        st.json(st.session_state.get("partial_dbg"))
 # 3) Payment / CTA area
 # If user already paid and payment is OK:
 if session_id and payment_ok:
