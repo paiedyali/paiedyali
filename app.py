@@ -36,10 +36,11 @@ st.markdown(
     border-radius: 12px;
     padding: 12px 14px;
     background: #eef6ff;
+    color: #17324d !important;
     margin: 10px 0 16px 0;
 ">
-  <div style="font-size: 18px; font-weight: 700;">🔒 Confidentialité</div>
-  <div style="margin-top:6px; font-size: 14px;">
+  <div style="font-size: 18px; font-weight: 700; color: #12304b !important;">🔒 Confidentialité</div>
+  <div style="margin-top:6px; font-size: 14px; color: #17324d !important; line-height: 1.65;">
     • Ton PDF n'est <b>pas stocké</b> par l'application.<br/>
     • Le traitement se fait <b>pendant l'analyse</b>, puis c'est terminé.<br/>
     • Si le PDF est un scan (image), l'app bascule automatiquement en OCR.
