@@ -29,25 +29,12 @@ st.title("🧾 Votre fiche de paie, enfin compréhensible")
 st.write("Importez votre bulletin PDF : découvrez gratuitement s’il est lisible et les premiers montants repérés. Vous choisissez ensuite si vous souhaitez la synthèse complète en PDF.")
 st.caption("Aperçu gratuit sans carte bancaire • Rapport complet : 7,50 € par bulletin • Sans abonnement")
 
-st.markdown(
-    """
-<div style="
-    border: 2px solid #1f77b4;
-    border-radius: 12px;
-    padding: 12px 14px;
-    background: #eef6ff;
-    color: #17324d !important;
-    margin: 10px 0 16px 0;
-">
-  <div style="font-size: 18px; font-weight: 700; color: #12304b !important;">🔒 Confidentialité</div>
-  <div style="margin-top:6px; font-size: 14px; color: #17324d !important; line-height: 1.65;">
-    • Ton PDF n'est <b>pas stocké</b> par l'application.<br/>
-    • Le traitement se fait <b>pendant l'analyse</b>, puis c'est terminé.<br/>
-    • Si le PDF est un scan (image), l'app bascule automatiquement en OCR.
-  </div>
-</div>
-""",
-    unsafe_allow_html=True,
+st.info(
+    "**🔒 Confidentialité**\n\n"
+    "- Votre PDF n'est **pas conservé durablement** par l'application après traitement.\n"
+    "- L'analyse utilise temporairement votre fichier pour produire le résultat.\n"
+    "- Si le PDF est un scan (image), l'application peut utiliser la reconnaissance optique de caractères (OCR).",
+    icon="🔒",
 )
 
 with st.sidebar.expander("Réglages techniques (facultatif)", expanded=False):
