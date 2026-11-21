@@ -24,9 +24,10 @@ from reportlab.pdfgen import canvas
 # ------------------------------------------------------------
 # UI
 # ------------------------------------------------------------
-st.set_page_config(page_title="Lecteur bulletin (Quadra + SILAE)", layout="wide")
-st.title("🧾 Ton bulletin de salaire (traduit en français courant)")
-st.write("Tu déposes ton bulletin PDF → synthèse simple + export PDF.")
+st.set_page_config(page_title="Comprendre ma fiche de paie | Paiedyali", layout="wide")
+st.title("🧾 Votre fiche de paie, enfin compréhensible")
+st.write("Importez votre bulletin PDF : découvrez gratuitement s’il est lisible et les premiers montants repérés. Vous choisissez ensuite si vous souhaitez la synthèse complète en PDF.")
+st.caption("Aperçu gratuit sans carte bancaire • Rapport complet : 7,50 € par bulletin • Sans abonnement")
 
 st.markdown(
     """
@@ -48,7 +49,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-DEBUG = st.checkbox("Mode debug", value=False)
+with st.sidebar.expander("Réglages techniques (facultatif)", expanded=False):
+    DEBUG = st.checkbox("Afficher les détails techniques", value=False)
+    OCR_FORCE = st.checkbox("Forcer l’OCR (si PDF image)", value=False)
+    DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
 
 # ------------------------------------------------------------
 # Paiement (Stripe) — mode SaaS 7,50 €
@@ -163,9 +167,7 @@ if _sid and (st.session_state.analysis_credit_used_for is not None) and (st.sess
     st.session_state.analysis_credit_used_for = None
 # Options d'analyse (après paiement)
 # ------------------------------------------------------------
-OCR_FORCE = st.checkbox("Forcer l'OCR (si PDF image)", value=False)
-DPI = st.slider("Qualité OCR (DPI)", 150, 350, 250, 50)
-uploaded = st.file_uploader("Dépose ton bulletin de salaire (PDF)", type=["pdf"])
+uploaded = st.file_uploader("Déposez votre bulletin de salaire (PDF)", type=["pdf"])
 
 # Si Tesseract n'est pas trouvé sur Windows, décommente et adapte :
 # pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -1767,7 +1769,7 @@ if uploaded is not None:
     st.session_state["uploaded_buffer"] = uploaded.getvalue()
     st.session_state["uploaded_name"] = uploaded.name
 
-    st.markdown("### 1) Analyse partielle (gratuit) — vérification de lisibilité")
+    st.markdown("### 1) Aperçu gratuit — vérification et premiers montants")
     partial_dpi = min(200, DPI)
     file_obj = io.BytesIO(st.session_state["uploaded_buffer"])
 
@@ -1805,10 +1807,32 @@ if uploaded is not None:
     # partial OK: show preview and payment option
     st.session_state["partial_ok"] = True
     fmt, fmt_dbg = detect_format(text_partial)
-    st.success(f"Document lisible — format détecté : {fmt}")
+    st.success("Votre bulletin est lisible : la lecture automatique a fonctionné.")
+    st.markdown("### Votre aperçu gratuit")
+    # Ces chiffres sont extraits du texte brut. Ils ne constituent pas une vérification de paie.
+    brut_est, _ = find_last_line_with_amount(
+        text_partial,
+        include_patterns=[r"salaire\s+brut", r"\bbrut\b"],
+        exclude_patterns=[r"net", r"imposable", r"csg", r"crds"],
+    )
+    net_est, _ = find_last_line_with_amount(
+        text_partial,
+        include_patterns=[r"net\s+paye", r"net\s+payé", r"net\s+à\s+payer", r"net\s+a\s+payer"],
+        exclude_patterns=[r"avant\s+imp", r"imposable"],
+    )
+    if brut_est is not None or net_est is not None:
+        col_brut, col_net = st.columns(2)
+        with col_brut:
+            st.metric("Salaire brut repéré", eur(brut_est) if brut_est is not None else "Non détecté")
+        with col_net:
+            st.metric("Net payé repéré", eur(net_est) if net_est is not None else "Non détecté")
+        st.caption("Montants repérés automatiquement, sans garantie d'exactitude. Vérifiez toujours votre bulletin officiel.")
+    else:
+        st.info("Le document est lisible, mais ses montants principaux n'ont pas pu être identifiés de façon fiable.")
 
-    with st.expander("Aperçu (début du texte extrait)"):
-        st.text((text_partial or "")[:4000])
+    st.markdown("**Ce que le rapport complet à 7,50 € peut apporter :**")
+    st.markdown("- Une synthèse pédagogique du brut, du net, des cotisations et de l'impôt à la source.\n- Des repères sur le coût employeur et les congés, lorsqu'ils sont lisibles.\n- Un PDF récapitulatif à conserver.")
+    st.caption("L'achat est facultatif. Après paiement, vous devrez téléverser à nouveau votre bulletin pour obtenir le rapport complet.")
 
     if DEBUG:
         with st.expander("Debug - partial details"):
