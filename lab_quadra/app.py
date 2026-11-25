@@ -228,9 +228,28 @@ if contributions_incomplete:
 elif collector_uncertain:
     st.info("Total social rapproché avec les bulletins, mais la ventilation par organisme reste indisponible : les réductions générales regroupent URSSAF et retraite.")
 st.markdown("**Cotisations de toute la société par organisme**")
-if repartition_incomplete:
-    st.warning("Ventilation non publiée : le montant global est calculé, mais la répartition exacte entre organismes ne peut pas être déduite de ces bulletins sans distinguer la réduction URSSAF et la réduction AGIRC-ARRCO.")
-    st.caption("Le brut et les montants nets restent issus de rubriques distinctes du PDF et ne valident pas les cotisations.")
+if contributions_incomplete:
+    st.warning("La ventilation est masquée : le contrôle des lignes de cotisation n'est pas encore fiable pour ce dossier.")
+elif collector_uncertain:
+    st.caption("Montants par famille AVANT répartition de la réduction générale commune URSSAF / AGIRC-ARRCO. Ils ne représentent PAS les sommes nettes dues à chaque organisme.")
+    reduction_sal=sum(p["groups"].get("REDUCTION_MIXTE",[0,0])[0] for p in people.values())
+    reduction_pat=sum(p["groups"].get("REDUCTION_MIXTE",[0,0])[1] for p in people.values())
+    provisional=[]
+    for cat in CATEGORIES:
+        salariale=company[cat][0]-(reduction_sal if cat=="AUTRES" else 0)
+        patronale=company[cat][1]-(reduction_pat if cat=="AUTRES" else 0)
+        provisional.append({"Organisme":LABELS[cat],"Salariales":euro(salariale),
+                            "Patronales":euro(patronale),"Total":euro(salariale+patronale)})
+    provisional.append({"Organisme":"Réduction générale à répartir (URSSAF / retraite)",
+                        "Salariales":euro(reduction_sal),
+                        "Patronales":euro(reduction_pat),
+                        "Total":euro(reduction_sal+reduction_pat)})
+    provisional.append({"Organisme":"TOTAL DES COTISATIONS",
+                        "Salariales":euro(total_salarial_classes),
+                        "Patronales":euro(total_patronal_classes),
+                        "Total":euro(total_salarial_classes+total_patronal_classes)})
+    st.dataframe(provisional,hide_index=True,use_container_width=True)
+    st.warning("Les montants nets à verser à l'URSSAF et à la retraite ne sont pas encore déterminés séparément. Ne pas utiliser ce tableau pour payer les organismes.")
 else:
     company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
                    "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c]))} for c in CATEGORIES]
@@ -254,8 +273,25 @@ for p in people.values():
         p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
         p_collector_uncertain=any(x["group"]=="REDUCTION_MIXTE" for x in p["lines"])
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
-        if p_incomplete or p_collector_uncertain:
-            st.warning("Répartition par organisme indisponible : réduction générale commune à plusieurs organismes ou lignes non rapprochées.")
+        if p_incomplete:
+            st.error("Ventilation indisponible : des cotisations sont non reconnues ou ne se rapprochent pas du bulletin.")
+        elif p_collector_uncertain:
+            # Le code de réduction commune est suivi indépendamment pour ne pas
+            # l'imputer arbitrairement à l'URSSAF ou à la retraite.
+            mixed=p["groups"].get("REDUCTION_MIXTE",[0,0])
+            preview=[]
+            for cat in CATEGORIES:
+                salariale=g[cat][0]-(mixed[0] if cat=="AUTRES" else 0)
+                patronale=g[cat][1]-(mixed[1] if cat=="AUTRES" else 0)
+                preview.append({"Famille":LABELS[cat],"Salariales":euro(salariale),
+                                "Patronales":euro(patronale),"Total":euro(salariale+patronale)})
+            preview.append({"Famille":"Réduction générale à répartir",
+                            "Salariales":euro(mixed[0]),"Patronales":euro(mixed[1]),
+                            "Total":euro(sum(mixed))})
+            preview.append({"Famille":"TOTAL","Salariales":euro(sal),
+                            "Patronales":euro(pat),"Total":euro(sal+pat)})
+            st.dataframe(preview,hide_index=True,use_container_width=True)
+            st.caption("Ventilation indicative avant partage de la réduction générale : pas un état de règlement par organisme.")
         else:
             detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
                      "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
