@@ -24,6 +24,9 @@ MONEY=re.compile(r"-?\d+\.\d{2,4}")
 CODE=re.compile(r"^\s*((?:E[0-9]{3}|(?:EQ|EW|SW|E_)[A-Z0-9_]{2,3}))\s+(.+)$")
 def cents(s):return int((Decimal(s)*100).quantize(Decimal("1")))
 def euro(c):return f"{c/100:,.2f} €".replace(","," ").replace(".",",")
+def pct(part,base):
+    if base is None or base<=0:return "—"
+    return f"{part*100/base:.2f}".replace(".",",")+" %"
 def parse(path):
     txt=subprocess.check_output(["pdftotext","-layout",str(path),"-"],timeout=30).decode("utf8")
     pages=[p for p in txt.split("\f") if p.strip()]
@@ -248,6 +251,15 @@ if contributions_incomplete:
     st.warning("La lecture des cotisations est incomplète : le total social est à vérifier.")
 elif collector_uncertain:
     st.info("Total social rapproché avec les bulletins, mais la ventilation par organisme reste indisponible : les réductions générales regroupent URSSAF et retraite.")
+if all_cost_known and cout_global>0:
+    st.subheader("Classement des salariés par coût employeur")
+    rank_rows=[{"Salarié":p["nom"] or "Matricule "+p["mat"],"Matricule":p["mat"],
+                "Coût employeur":euro(p["cout"]),"Part du coût global":pct(p["cout"],cout_global)}
+               for p in sorted(people.values(),key=lambda p:p["cout"],reverse=True)]
+    rank_rows.append({"Salarié":"TOTAL","Matricule":"","Coût employeur":euro(cout_global),"Part du coût global":"100,00 %"})
+    st.dataframe(rank_rows,hide_index=True,use_container_width=True)
+    st.caption("Part du coût global = coût du salarié / coût total employeur × 100. Arrondi à deux décimales.")
+
 st.markdown("**Cotisations de toute la société par organisme**")
 if contributions_incomplete:
     st.warning("La ventilation est masquée : le contrôle des lignes de cotisation n'est pas encore fiable pour ce dossier.")
@@ -272,12 +284,15 @@ elif collector_uncertain:
     st.dataframe(provisional,hide_index=True,use_container_width=True)
     st.warning("Les montants nets à verser à l'URSSAF et à la retraite ne sont pas encore déterminés séparément. Ne pas utiliser ce tableau pour payer les organismes.")
 else:
+    company_social=total_salarial_classes+total_patronal_classes
     company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
-                   "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c]))} for c in CATEGORIES]
+                   "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c])),
+                   "Part des cotisations":pct(sum(company[c]),company_social)} for c in CATEGORIES]
     company_rows.append({"Organisme":"TOTAL","Salariales":euro(total_salarial_classes),
                          "Patronales":euro(total_patronal_classes),
-                         "Total à reverser":euro(total_salarial_classes+total_patronal_classes)})
+                         "Total à reverser":euro(total_salarial_classes+total_patronal_classes),"Part des cotisations":pct(company_social,company_social)})
     st.dataframe(company_rows,hide_index=True,use_container_width=True)
+    st.caption("Part des cotisations = total de l’organisme / total social de la société, hors PAS. Ne pas confondre avec un taux sur salaire brut.")
     if estimated_collector:
         st.caption("Ventilation indicative : la réduction Q802 est estimée par salarié, avec des écarts possibles de 0,01 € par rapport au détail interne Quadra.")
     st.success("Contrôle patronal : "+euro(total_patronal_classes)+" calculés / "+
@@ -302,8 +317,11 @@ for p in people.values():
         a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
         p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
-        p_collector_uncertain=any(x["group"]=="REDUCTION_MIXTE" for x in p["lines"])
+        p_collector_uncertain="REDUCTION_MIXTE" in p["groups"]
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
+        if not p_incomplete and p["brut"] and p["brut"]>0:
+            st.metric("Taux de cotisations patronales / brut",pct(pat,p["brut"]))
+            st.caption("Taux patronal = cotisations patronales nettes après réductions / salaire brut × 100.")
         if p_incomplete:
             st.error("Ventilation indisponible : des cotisations sont non reconnues ou ne se rapprochent pas du bulletin.")
         elif p_collector_uncertain:
@@ -325,10 +343,12 @@ for p in people.values():
             st.caption("Ventilation indicative avant partage de la réduction générale : pas un état de règlement par organisme.")
         else:
             detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
-                     "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
+                     "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c])),
+                     "Part des cotisations":pct(sum(g[c]),sal+pat)} for c in CATEGORIES]
             detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
-                           "Patronales":euro(pat),"Total à reverser":euro(sal+pat)})
+                           "Patronales":euro(pat),"Total à reverser":euro(sal+pat),"Part des cotisations":pct(sal+pat,sal+pat)})
             st.dataframe(detail,hide_index=True,use_container_width=True)
+            st.caption("Part des cotisations = cotisations de cet organisme / cotisations totales du salarié. « — » si le total est nul.")
         if p["delta"]==0 and not p_incomplete:
             st.caption("Contrôle patronal : "+euro(pat)+" calculés / "+
                        euro(p["pat"] or 0)+" sur le bulletin · Écart : 0,00 €")
