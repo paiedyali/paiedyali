@@ -35,9 +35,15 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),pages=[],lines=[],unknown=[],brut=None,pat=None))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,pages=[],lines=[],unknown=[],brut=None,pat=None))
         q["pages"].append(n)
         ll=p.splitlines()
+        if not q["nom"]:
+            for header_line in ll[:38]:
+                person_name=re.search(r"(?:^|\s)(?:MME|Mme|Mlle|M\.)\s+([A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ\x27 -]{2,})",header_line)
+                if person_name:
+                    q["nom"]=" ".join(person_name.group(1).split())
+                    break
         h=next((x for x in ll if "Montant salarial" in x and "Mt patronal" in x),None)
         if not h:errors.append("Colonnes introuvables page "+str(n));continue
         sx,px=h.index("Montant salarial"),h.index("Mt patronal")
@@ -94,7 +100,7 @@ def category_totals(person):
 rows=[]
 for key,p in people.items():
     g=category_totals(p)
-    row={"Matricule":p["mat"],"Brut":euro(p["brut"] or 0),"Patronal":euro(p["pat"] or 0)}
+    row={"Salarié":p["nom"] or "Nom non reconnu","Matricule":p["mat"],"Brut":euro(p["brut"] or 0),"Patronal":euro(p["pat"] or 0)}
     for c in CATEGORIES:row[LABELS[c]]=euro(sum(g[c]))
     row["Écart patronal"]=euro(p["delta"]) if p["delta"] is not None else "Indéterminé"
     rows.append(row)
@@ -105,7 +111,7 @@ if any(p["unknown"] or p["delta"]!=0 for p in people.values()):
 else:st.success("Contrôle du total patronal : conforme aux bulletins.")
 st.subheader("Détail par salarié")
 for p in people.values():
-    with st.expander("Matricule "+p["mat"],expanded=len(people)==1):
+    with st.expander((p["nom"] or "Nom non reconnu")+" · Matricule "+p["mat"],expanded=len(people)==1):
         g=category_totals(p)
         detail=[{"Organisme":LABELS[c],"Salarial":euro(g[c][0]),"Patronal":euro(g[c][1]),"Total":euro(sum(g[c]))} for c in CATEGORIES]
         st.dataframe(detail,hide_index=True,use_container_width=True)
