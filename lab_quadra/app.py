@@ -97,28 +97,59 @@ def category_totals(person):
         totals[display][0]+=amounts[0]
         totals[display][1]+=amounts[1]
     return totals
-rows=[]
-for key,p in people.items():
-    g=category_totals(p)
-    row={"Salarié":p["nom"] or "Nom non reconnu","Matricule":p["mat"],"Brut":euro(p["brut"] or 0),"Patronal":euro(p["pat"] or 0)}
-    for c in CATEGORIES:row[LABELS[c]]=euro(sum(g[c]))
-    row["Écart patronal"]=euro(p["delta"]) if p["delta"] is not None else "Indéterminé"
-    rows.append(row)
-st.subheader("Synthèse par salarié")
-st.dataframe(rows,hide_index=True,use_container_width=True)
-if any(p["unknown"] or p["delta"]!=0 for p in people.values()):
-    st.warning("Résultat partiel : cotisations inconnues ou écarts de contrôle. Ne pas utiliser comme ventilation validée.")
-else:st.success("Contrôle du total patronal : conforme aux bulletins.")
+# Société : agréger tous les salariés, puis afficher un seul récapitulatif.
+company=defaultdict(lambda:[0,0])
+for p in people.values():
+    for category,amounts in category_totals(p).items():
+        company[category][0]+=amounts[0]
+        company[category][1]+=amounts[1]
+
+total_brut=sum((p["brut"] or 0) for p in people.values())
+total_patronal=sum((p["pat"] or 0) for p in people.values())
+total_salarial_classes=sum(v[0] for v in company.values())
+total_patronal_classes=sum(v[1] for v in company.values())
+has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
+
+st.subheader("Synthèse de la société")
+st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
+k1,k2,k3=st.columns(3)
+k1.metric("Bulletins / salariés",str(len(people)))
+k2.metric("Salaire brut total",euro(total_brut))
+k3.metric("Cotisations patronales",euro(total_patronal))
+st.caption("Brut + cotisations patronales : "+euro(total_brut+total_patronal)+
+           " (hors frais et remboursements éventuels ; ne constitue pas le coût employeur complet).")
+company_rows=[{"Organisme":LABELS[c],"Salarial":euro(company[c][0]),
+               "Patronal":euro(company[c][1]),"Total":euro(sum(company[c]))} for c in CATEGORIES]
+company_rows.append({"Organisme":"TOTAL","Salarial":euro(total_salarial_classes),
+                     "Patronal":euro(total_patronal_classes),
+                     "Total":euro(total_salarial_classes+total_patronal_classes)})
+st.dataframe(company_rows,hide_index=True,use_container_width=True)
+if has_anomalies:
+    st.warning("Résultat provisoire : cotisations non reconnues ou écart patronal sur au moins un bulletin.")
+else:
+    st.success("Contrôle patronal : "+euro(total_patronal_classes)+" calculés / "+
+               euro(total_patronal)+" sur les bulletins. Écart : 0,00 €.")
+
 st.subheader("Détail par salarié")
 for p in people.values():
     with st.expander((p["nom"] or "Nom non reconnu")+" · Matricule "+p["mat"],expanded=len(people)==1):
         g=category_totals(p)
-        detail=[{"Organisme":LABELS[c],"Salarial":euro(g[c][0]),"Patronal":euro(g[c][1]),"Total":euro(sum(g[c]))} for c in CATEGORIES]
+        a,b=st.columns(2)
+        a.metric("Brut",euro(p["brut"] or 0))
+        b.metric("Cotisations patronales",euro(p["pat"] or 0))
+        detail=[{"Organisme":LABELS[c],"Salarial":euro(g[c][0]),
+                 "Patronal":euro(g[c][1]),"Total":euro(sum(g[c]))} for c in CATEGORIES]
+        sal=sum(v[0] for v in g.values())
+        pat=sum(v[1] for v in g.values())
+        detail.append({"Organisme":"TOTAL","Salarial":euro(sal),
+                       "Patronal":euro(pat),"Total":euro(sal+pat)})
         st.dataframe(detail,hide_index=True,use_container_width=True)
-        st.caption("Cotisations classées : "+euro(sum(sum(v) for v in g.values()))+
-                   " · Patronal bulletin : "+euro(p["pat"] or 0))
-        if p["delta"]!=0:
-            st.warning("Écart patronal : "+(euro(p["delta"]) if p["delta"] is not None else "indéterminé"))
+        if p["delta"]==0:
+            st.caption("Contrôle patronal : "+euro(pat)+" calculés / "+
+                       euro(p["pat"] or 0)+" sur le bulletin · Écart : 0,00 €")
+        else:
+            st.warning("Écart patronal à contrôler : "+
+                       (euro(p["delta"]) if p["delta"] is not None else "indéterminé"))
         if p["unknown"]:
             st.error(str(len(p["unknown"]))+" rubrique(s) non classée(s).")
             with st.expander("Anomalies techniques"):
