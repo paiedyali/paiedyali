@@ -124,10 +124,16 @@ def parse(path):
             if code not in MAP:q["unknown"].append(item)
             else:item["group"]=MAP[code];q["lines"].append(item)
     for q in found.values():
-        if not q["lines"] and q["pat"] is None and q["brut"] == 0:q["pat"]=0
-        # Un bulletin de paie nul n'a pas de montant "Versé employeur" imprimé.
-        # Quadra laisse ce champ vide ; le coût est bien zéro dans ce cas.
-        if q["cout"] is None and q["brut"] == 0 and q["pat"] == 0:
+        # Un bulletin de solde nul peut ne contenir NI SALAIRE BRUT,
+        # NI TOTAL DES RETENUES : ne jamais exiger ces deux lignes.
+        # La confirmation vient du net à payer explicitement égal à 0,
+        # sans aucune rubrique de cotisation ni brut positif.
+        zero_slip=(not q["lines"] and not q["unknown"]
+                   and q["net"] == 0 and q["brut"] in (None,0)
+                   and q["pat"] in (None,0))
+        if zero_slip:
+            q["brut"]=0
+            q["pat"]=0
             q["cout"]=0
         ouvrier=any(x["code"] in {"EQH7","EQH8","EQH9","EQT7"} for x in q["lines"])
         groups=defaultdict(lambda:[0,0])
