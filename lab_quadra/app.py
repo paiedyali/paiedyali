@@ -68,12 +68,53 @@ def parse(path):
                         for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
                 if len(values)==1:q["net"]=cents(values[0])
 
+        # Certains bulletins Quadra sont regroupés par sections Q100-Q802 :
+        # les lignes de cotisation n'ont alors aucun code E*/SW* individuel.
+        q_section=None
+        q_section_line=re.compile(r"^\\s*(Q\\d{3})\\s+")
+        q_labels={
+            "Q100":{"Sécu.Soc-Mal.Mater.Inval.Déc.":"URSSAF"},
+            "Q200":{"Acc. du trav. - Mal. prof.":"URSSAF"},
+            "Q300":{"Sécu.Soc Plafonnée":"URSSAF",
+                    "Sécu.Soc Déplafonnée":"URSSAF",
+                    "Complémentaire Tranche 1":"RETRAITE"},
+            "Q400":{"Famille":"URSSAF"},
+            "Q500":{"Chômage":"CHOMAGE","AGS":"CHOMAGE"},
+            "Q600":{"Autres contrib. dues par empl.":"URSSAF"},
+            "Q800":{"CSG déductible à l'IR":"URSSAF"},
+            "Q801":{"CSG/CRDS non déductible à l'IR":"URSSAF"},
+            "Q802":{"EXO., ECRET. ET ALLEG. COTIS":"URSSAF"},
+        }
         for line in ll:
+            section_match=q_section_line.match(line)
+            if section_match:
+                q_section=section_match.group(1)
+                continue
             sal=[v for v in MONEY.finditer(line) if sx-9<=v.start()<px-8]
             pat=[v for v in MONEY.finditer(line) if px-9<=v.start()<=px+10]
             if "SALAIRE BRUT" in line and sal:q["brut"]=cents(sal[-1].group())
             if "TOTAL DES RETENUES" in line and pat:q["pat"]=cents(pat[-1].group())
             hit=CODE.match(line)
+            if not hit and q_section and (sal or pat):
+                # Accepter une rubrique Q seulement si son libellé est explicitement connu.
+                rubric=line[:max(0,sx-28)].strip()
+                expected=q_labels.get(q_section,{})
+                # Associer le code Q+libellé sans déduire le recouvreur d'un mot isolé.
+                if rubric in expected:
+                    q["lines"].append(dict(
+                        code=q_section,label=rubric,
+                        sal=cents(sal[-1].group()) if sal else 0,
+                        pat=cents(pat[-1].group()) if pat else 0,
+                        page=n,group=expected[rubric]))
+                    continue
+                # Ne pas comptabiliser les totaux ou légendes.
+                if rubric and not any(x in rubric.upper() for x in
+                   ("TOTAL DES RETENUES","SALAIRE BRUT","NET IMPOSABLE",
+                    "COTIS.","NET A PAYER","MONTANT NET SOCIAL")):
+                    q["unknown"].append(dict(code=q_section,label=rubric,
+                        sal=cents(sal[-1].group()) if sal else 0,
+                        pat=cents(pat[-1].group()) if pat else 0,page=n))
+                    continue
             if not hit or not (sal or pat) or hit.group(1) in {"BQRE","BPM1","SWZW","SX07","S001"}:continue
             code=hit.group(1)
             item=dict(code=code,label=hit.group(2).strip().split("  ")[0],sal=cents(sal[-1].group()) if sal else 0,pat=cents(pat[-1].group()) if pat else 0,page=n)
