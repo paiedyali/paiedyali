@@ -35,7 +35,7 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,pages=[],lines=[],unknown=[],brut=None,pat=None))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,cout=None))
         q["pages"].append(n)
         ll=p.splitlines()
         if not q["nom"]:
@@ -47,6 +47,17 @@ def parse(path):
         h=next((x for x in ll if "Montant salarial" in x and "Mt patronal" in x),None)
         if not h:errors.append("Colonnes introuvables page "+str(n));continue
         sx,px=h.index("Montant salarial"),h.index("Mt patronal")
+        # Les valeurs finales sont parfois en seconde page, sous le titre.
+        for index, line in enumerate(ll):
+            if "Versé employeur" in line or "Verse employeur" in line:
+                values=[v.group() for future in ll[index+1:index+7]
+                        for v in [re.fullmatch(r"\\s*(-?\\d+\\.\\d{2})\\s*",future)] if v]
+                if len(values)==1:q["cout"]=cents(values[0])
+            if "Net à payer au salarié" in line:
+                values=[v.group() for future in ll[index+1:index+8]
+                        for v in [re.fullmatch(r"\\s*(-?\\d+\\.\\d{2})\\s*",future)] if v]
+                if len(values)==1:q["net"]=cents(values[0])
+
         for line in ll:
             sal=[v for v in MONEY.finditer(line) if sx-9<=v.start()<px-8]
             pat=[v for v in MONEY.finditer(line) if px-9<=v.start()<=px+10]
@@ -112,13 +123,19 @@ has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
-st.metric("Coût salarial (brut + charges patronales)",euro(total_brut+total_patronal))
-k1,k2,k3=st.columns(3)
-k1.metric("Brut total",euro(total_brut))
-k2.metric("Cotisations patronales",euro(total_patronal))
-k3.metric("Total des cotisations à reverser",euro(total_salarial_classes+total_patronal_classes))
-st.caption("Le total à reverser comprend les cotisations salariales et patronales. Il ne comprend pas le PAS ; l'exigibilité et les règlements effectifs dépendent des organismes et des échéances.")
-st.info("Le coût présenté est brut + cotisations patronales : il n'inclut pas encore les frais, remboursements de dépenses et autres sommes éventuelles hors brut. Les cotisations salariales sont déjà comprises dans le brut : on ne les additionne pas deux fois.")
+all_cost_known=all(p["cout"] is not None for p in people.values())
+all_net_known=all(p["net"] is not None for p in people.values())
+cout_global=sum(p["cout"] for p in people.values()) if all_cost_known else None
+net_global=sum(p["net"] for p in people.values()) if all_net_known else None
+st.metric("Coût global des salariés",euro(cout_global) if all_cost_known else "Non déterminé")
+a,b,c=st.columns(3)
+a.metric("Net total à payer",euro(net_global) if all_net_known else "Non déterminé")
+b.metric("Masse salariale brute",euro(total_brut))
+c.metric("Cotisations sociales totales",euro(total_salarial_classes+total_patronal_classes))
+st.caption("Cotisations sociales totales : salariales + patronales, hors prélèvement à la source. Les cotisations salariales sont déjà incluses dans les salaires bruts.")
+if not all_cost_known or not all_net_known:
+    st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
+
 st.markdown("**Cotisations de toute la société par organisme**")
 company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
                "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c]))} for c in CATEGORIES]
@@ -137,17 +154,13 @@ st.subheader("Détail par salarié")
 for p in people.values():
     with st.expander((p["nom"] or "Nom non reconnu")+" · Matricule "+p["mat"],expanded=len(people)==1):
         g=category_totals(p)
-        g=category_totals(p)
         sal=sum(v[0] for v in g.values())
         pat=sum(v[1] for v in g.values())
-        salaire_brut=p["brut"] or 0
-        patronales=p["pat"] or 0
-        st.metric("Coût salarié (brut + patronales)",euro(salaire_brut+patronales))
+        st.metric("Coût total du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
         a,b,c=st.columns(3)
-        a.metric("Salaire brut",euro(salaire_brut))
-        b.metric("Cotisations patronales",euro(patronales))
-        c.metric("Cotisations à reverser",euro(sal+pat))
-        st.caption("Coût hors frais remboursés et sommes hors brut. Les cotisations salariales sont comprises dans le brut.")
+        a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
+        b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
+        c.metric("Cotisations sociales totales",euro(sal+pat))
         detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
                  "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
         detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
