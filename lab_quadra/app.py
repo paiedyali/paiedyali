@@ -97,7 +97,7 @@ def parse(path):
             hit=CODE.match(line)
             if not hit and q_section and (sal or pat):
                 # Accepter une rubrique Q seulement si son libellé est explicitement connu.
-                rubric=line[:max(0,sx-28)].strip()
+                rubric=line[:sx].strip().split('  ')[0].strip()
                 expected=q_labels.get(q_section,{})
                 # Associer le code Q+libellé sans déduire le recouvreur d'un mot isolé.
                 if rubric in expected:
