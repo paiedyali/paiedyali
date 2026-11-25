@@ -304,9 +304,9 @@ for p in people.values():
         g=category_totals(p)
         sal=sum(v[0] for v in g.values())
         pat=sum(v[1] for v in g.values())
-        st.metric("Coût total du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
-        if cout_global and p["cout"] is not None:
-            st.caption("Poids dans le coût global de l'entreprise : "+f'{100*p["cout"]/cout_global:.2f}'.replace(".",",")+" %")
+        cost_col, share_col=st.columns(2)
+        cost_col.metric("Coût employeur du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
+        share_col.metric("Part du coût total de l’entreprise",pct(p["cout"],cout_global) if p["cout"] is not None else "Non déterminé")
         if p["estimated_split"] is not None:
             x=p["estimated_split"]
             st.info("Réduction générale Q802 estimée : URSSAF "+euro(x["urssaf"])+
