@@ -73,11 +73,12 @@ def parse(path):
 
         # Certains bulletins Quadra sont regroupés par sections Q100-Q802 :
         # les lignes de cotisation n'ont alors aucun code E*/SW* individuel.
-        q_section=None
+        # Les pages de continuation Q801 peuvent commencer sans titre de section.
+        q_section="Q801" if q["q_layout"] else None
         q_section_line=re.compile(r"^\s*(Q\d{3})\s+")
         q_labels={
             "Q100":{"Sécu.Soc-Mal.Mater.Inval.Déc.":"URSSAF",
-                    "Complémentaire Santé":"MUTUELLE"},
+                    "Complémentaire Santé":"PREVOYANCE"},
             "Q200":{"Acc. du trav. - Mal. prof.":"URSSAF"},
             "Q300":{"Sécu.Soc Plafonnée":"URSSAF",
                     "Sécu.Soc Déplafonnée":"URSSAF",
@@ -87,7 +88,7 @@ def parse(path):
             "Q600":{"Autres contrib. dues par empl.":"URSSAF"},
             "Q800":{"CSG déductible à l'IR":"URSSAF"},
             "Q801":{"CSG/CRDS non déductible à l'IR":"URSSAF"},
-            "Q802":{"EXO., ECRET. ET ALLEG. COTIS":"URSSAF"},
+            "Q802":{"EXO., ECRET. ET ALLEG. COTIS":"REDUCTION_MIXTE"},
         }
         in_tax_section=False
         for line in ll:
@@ -200,8 +201,10 @@ total_patronal=sum((p["pat"] or 0) for p in people.values())
 total_salarial_classes=sum(v[0] for v in company.values())
 total_patronal_classes=sum(v[1] for v in company.values())
 has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
+collector_uncertain=any(x["group"]=="REDUCTION_MIXTE" for p in people.values() for x in p["lines"])
 missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] or p["pat"] is None for p in people.values())
-repartition_incomplete=has_anomalies or missing_contribution_breakdown
+contributions_incomplete=has_anomalies or missing_contribution_breakdown
+repartition_incomplete=contributions_incomplete or collector_uncertain
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
@@ -213,18 +216,20 @@ st.metric("Coût global des salariés",euro(cout_global) if all_cost_known else 
 a,b,c=st.columns(3)
 a.metric("Net total à payer",euro(net_global) if all_net_known else "Non déterminé")
 b.metric("Masse salariale brute",euro(total_brut))
-c.metric("Cotisations sociales totales",euro(total_salarial_classes+total_patronal_classes) if not repartition_incomplete else "À vérifier")
+c.metric("Cotisations sociales totales",euro(total_salarial_classes+total_patronal_classes) if not contributions_incomplete else "À vérifier")
 st.caption("Cotisations sociales totales : salariales + patronales, hors prélèvement à la source. Les cotisations salariales sont déjà incluses dans les salaires bruts.")
 if not all_cost_known or not all_net_known:
     st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
 if any(p["q_layout"] for p in people.values()):
-    st.info("Format Quadra par sections Q détecté : la classification par organisme est provisoire. En particulier, Complémentaire Santé est présentée dans Mutuelle par libellé, à confirmer avec le tableau des charges. Le contrôle patronal ne certifie pas les organismes de recouvrement.")
+    st.info("Format Q détecté : le regroupement « Complémentaire Santé » et les réductions générales peuvent correspondre à plusieurs organismes. Leur recouvreur exact doit être confirmé.")
 
-if repartition_incomplete:
-    st.warning("La lecture des cotisations est incomplète. Les montants par organisme ne doivent pas être considérés comme des sommes nulles.")
+if contributions_incomplete:
+    st.warning("La lecture des cotisations est incomplète : le total social est à vérifier.")
+elif collector_uncertain:
+    st.info("Total social rapproché avec les bulletins, mais la ventilation par organisme reste indisponible : les réductions générales regroupent URSSAF et retraite.")
 st.markdown("**Cotisations de toute la société par organisme**")
 if repartition_incomplete:
-    st.error("Ventilation indisponible : les montants extraits ne se rapprochent pas du bulletin. Aucun total par organisme n'est présenté comme dû.")
+    st.warning("Ventilation non publiée : le montant global est calculé, mais la répartition exacte entre organismes ne peut pas être déduite de ces bulletins sans distinguer la réduction URSSAF et la réduction AGIRC-ARRCO.")
     st.caption("Le brut et les montants nets restent issus de rubriques distinctes du PDF et ne valident pas les cotisations.")
 else:
     company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
@@ -247,9 +252,10 @@ for p in people.values():
         a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
         p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
+        p_collector_uncertain=any(x["group"]=="REDUCTION_MIXTE" for x in p["lines"])
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
-        if p_incomplete:
-            st.error("Répartition par organisme indisponible sur ce bulletin. Détails techniques ci-dessous.")
+        if p_incomplete or p_collector_uncertain:
+            st.warning("Répartition par organisme indisponible : réduction générale commune à plusieurs organismes ou lignes non rapprochées.")
         else:
             detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
                      "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
