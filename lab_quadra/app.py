@@ -21,7 +21,7 @@ for group,codes in {
 "PRO_BTP":"EQH2 EQ8O EQDG EWHO EQHR EQHV"}.items():
     for code in codes.split():MAP[code]=group
 MONEY=re.compile(r"-?\d+\.\d{2,4}")
-CODE=re.compile(r"^\s*([A-Z][A-Z0-9_]{2,4})\s+(.+)$")
+CODE=re.compile(r"^\s*((?:EQ|EW|SW|E_)[A-Z0-9_]{2,3})\s+(.+)$")
 def cents(s):return int((Decimal(s)*100).quantize(Decimal("1")))
 def euro(c):return f"{c/100:,.2f} €".replace(","," ").replace(".",",")
 def parse(path):
