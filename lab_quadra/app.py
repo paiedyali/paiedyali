@@ -154,6 +154,99 @@ else:
     st.success("Contrôle patronal : "+euro(total_patronal_classes)+" calculés / "+
                euro(total_patronal)+" sur les bulletins. Écart : 0,00 €.")
 
+# Inspiration PayDashboard : comparer deux jeux de bulletins, sans stockage serveur.
+st.subheader("Comparer deux périodes")
+st.caption("Importez en option les bulletins d'une autre période du même SIRET. Le calcul se fait uniquement pendant cette session.")
+reference_file=st.file_uploader("PDF de référence (autre mois, même entreprise)",type="pdf",key="comparaison")
+if reference_file is not None:
+    reference_path=None
+    if reference_file.size>15*1024*1024:
+        st.error("Le PDF de référence dépasse 15 Mo.")
+    else:
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".pdf",delete=False) as tmp:
+                reference_path=Path(tmp.name)
+                tmp.write(reference_file.getvalue())
+            reference,reference_errors=parse(reference_path)
+        except Exception:
+            st.error("Le PDF de référence n'a pas pu être lu dans le format Quadra attendu.")
+            reference=None
+            reference_errors=[]
+        finally:
+            if reference_path is not None and reference_path.exists():
+                reference_path.unlink()
+        if reference is not None:
+            current_siret=next(iter(people))[0]
+            previous_sirets={k[0] for k in reference}
+            previous_periods={k[1] for k in reference}
+            current_period=next(iter(people))[1]
+            if reference_errors or not reference:
+                st.error("Référence incomplète : aucune comparaison affichée.")
+                st.write(reference_errors)
+            elif previous_sirets!={current_siret} or len(previous_periods)!=1:
+                st.error("La comparaison exige un seul établissement (même SIRET) et une seule période par PDF.")
+            elif current_period in previous_periods:
+                st.error("Les deux PDF concernent la même période. Importez une autre période.")
+            else:
+                reference_period=next(iter(previous_periods))
+                old_people={p["mat"]:p for p in reference.values()}
+                new_people={p["mat"]:p for p in people.values()}
+                old_group=defaultdict(lambda:[0,0])
+                for old_person in reference.values():
+                    for group,values in category_totals(old_person).items():
+                        old_group[group][0]+=values[0]
+                        old_group[group][1]+=values[1]
+                # Toutes les mesures affichées sont calculées uniquement depuis les PDF importés.
+                old_brut=sum((p["brut"] or 0) for p in reference.values())
+                old_social=sum(sum(v) for v in old_group.values())
+                old_net=(sum(p["net"] for p in reference.values())
+                         if all(p["net"] is not None for p in reference.values()) else None)
+                old_cost=(sum(p["cout"] for p in reference.values())
+                          if all(p["cout"] is not None for p in reference.values()) else None)
+                current_social=total_salarial_classes+total_patronal_classes
+                st.markdown("**Période analysée :** "+current_period+" · **Référence :** "+reference_period)
+                comparison=[
+                    {"Indicateur":"Coût global","Référence":euro(old_cost) if old_cost is not None else "Non déterminé",
+                     "Période analysée":euro(cout_global) if cout_global is not None else "Non déterminé",
+                     "Évolution":euro(cout_global-old_cost) if cout_global is not None and old_cost is not None else "Non calculable"},
+                    {"Indicateur":"Net total","Référence":euro(old_net) if old_net is not None else "Non déterminé",
+                     "Période analysée":euro(net_global) if net_global is not None else "Non déterminé",
+                     "Évolution":euro(net_global-old_net) if net_global is not None and old_net is not None else "Non calculable"},
+                    {"Indicateur":"Masse salariale brute","Référence":euro(old_brut),
+                     "Période analysée":euro(total_brut),"Évolution":euro(total_brut-old_brut)},
+                    {"Indicateur":"Cotisations sociales","Référence":euro(old_social),
+                     "Période analysée":euro(current_social),"Évolution":euro(current_social-old_social)}
+                ]
+                st.dataframe(comparison,hide_index=True,use_container_width=True)
+                st.markdown("**Évolution des cotisations par organisme**")
+                variations=[]
+                for group in CATEGORIES:
+                    before=sum(old_group[group])
+                    now=sum(company[group])
+                    variations.append({"Organisme":LABELS[group],"Référence":euro(before),
+                                       "Période analysée":euro(now),"Écart":euro(now-before)})
+                st.dataframe(variations,hide_index=True,use_container_width=True)
+                st.markdown("**Évolution par salarié (identification par matricule)**")
+                changes=[]
+                for mat in sorted(set(old_people)|set(new_people),key=lambda x:(not x.isdigit(),int(x) if x.isdigit() else x)):
+                    old=old_people.get(mat)
+                    new=new_people.get(mat)
+                    label=(new or old)["nom"] or "Nom non reconnu"
+                    if old is None: status="Présent uniquement sur la période analysée"
+                    elif new is None:status="Présent uniquement sur la référence"
+                    else:status="Présent sur les deux périodes"
+                    old_value=old["cout"] if old else None
+                    new_value=new["cout"] if new else None
+                    changes.append({"Salarié":label,"Matricule":mat,"Situation":status,
+                                    "Coût référence":euro(old_value) if old_value is not None else "—",
+                                    "Coût période":euro(new_value) if new_value is not None else "—",
+                                    "Variation":euro(new_value-old_value) if new_value is not None and old_value is not None else "—"})
+                st.dataframe(changes,hide_index=True,use_container_width=True)
+                uncertain_old=any(p["delta"]!=0 or p["unknown"] for p in reference.values())
+                if uncertain_old or has_anomalies:
+                    st.warning("Attention : au moins une période présente des écarts ou rubriques inconnues. La comparaison est indicative.")
+                st.caption("Une variation ne prouve pas sa cause. Les arrivées, départs, absences, primes, régularisations et frais doivent être analysés avant toute explication. Aucun historique n'est conservé dans cette version du laboratoire.")
+
 st.subheader("Détail par salarié")
 for p in people.values():
     with st.expander((p["nom"] or "Nom non reconnu")+" · Matricule "+p["mat"],expanded=len(people)==1):
