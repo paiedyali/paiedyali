@@ -50,12 +50,12 @@ def parse(path):
         # Les valeurs finales sont parfois en seconde page, sous le titre.
         for index, line in enumerate(ll):
             if "Versé employeur" in line or "Verse employeur" in line:
-                values=[v.group() for future in ll[index+1:index+7]
-                        for v in [re.fullmatch(r"\\s*(-?\\d+\\.\\d{2})\\s*",future)] if v]
+                values=[v.group(1) for future in ll[index+1:index+7]
+                        for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
                 if len(values)==1:q["cout"]=cents(values[0])
             if "Net à payer au salarié" in line:
-                values=[v.group() for future in ll[index+1:index+8]
-                        for v in [re.fullmatch(r"\\s*(-?\\d+\\.\\d{2})\\s*",future)] if v]
+                values=[v.group(1) for future in ll[index+1:index+8]
+                        for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
                 if len(values)==1:q["net"]=cents(values[0])
 
         for line in ll:
