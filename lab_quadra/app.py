@@ -112,18 +112,21 @@ has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
+st.metric("Coût salarial (brut + charges patronales)",euro(total_brut+total_patronal))
 k1,k2,k3=st.columns(3)
-k1.metric("Bulletins / salariés",str(len(people)))
-k2.metric("Salaire brut total",euro(total_brut))
-k3.metric("Cotisations patronales",euro(total_patronal))
-st.caption("Brut + cotisations patronales : "+euro(total_brut+total_patronal)+
-           " (hors frais et remboursements éventuels ; ne constitue pas le coût employeur complet).")
-company_rows=[{"Organisme":LABELS[c],"Salarial":euro(company[c][0]),
-               "Patronal":euro(company[c][1]),"Total":euro(sum(company[c]))} for c in CATEGORIES]
-company_rows.append({"Organisme":"TOTAL","Salarial":euro(total_salarial_classes),
-                     "Patronal":euro(total_patronal_classes),
-                     "Total":euro(total_salarial_classes+total_patronal_classes)})
+k1.metric("Brut total",euro(total_brut))
+k2.metric("Cotisations patronales",euro(total_patronal))
+k3.metric("Total des cotisations à reverser",euro(total_salarial_classes+total_patronal_classes))
+st.caption("Le total à reverser comprend les cotisations salariales et patronales. Il ne comprend pas le PAS ; l'exigibilité et les règlements effectifs dépendent des organismes et des échéances.")
+st.info("Le coût présenté est brut + cotisations patronales : il n'inclut pas encore les frais, remboursements de dépenses et autres sommes éventuelles hors brut. Les cotisations salariales sont déjà comprises dans le brut : on ne les additionne pas deux fois.")
+st.markdown("**Cotisations de toute la société par organisme**")
+company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
+               "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c]))} for c in CATEGORIES]
+company_rows.append({"Organisme":"TOTAL","Salariales":euro(total_salarial_classes),
+                     "Patronales":euro(total_patronal_classes),
+                     "Total à reverser":euro(total_salarial_classes+total_patronal_classes)})
 st.dataframe(company_rows,hide_index=True,use_container_width=True)
+
 if has_anomalies:
     st.warning("Résultat provisoire : cotisations non reconnues ou écart patronal sur au moins un bulletin.")
 else:
@@ -134,15 +137,21 @@ st.subheader("Détail par salarié")
 for p in people.values():
     with st.expander((p["nom"] or "Nom non reconnu")+" · Matricule "+p["mat"],expanded=len(people)==1):
         g=category_totals(p)
-        a,b=st.columns(2)
-        a.metric("Brut",euro(p["brut"] or 0))
-        b.metric("Cotisations patronales",euro(p["pat"] or 0))
-        detail=[{"Organisme":LABELS[c],"Salarial":euro(g[c][0]),
-                 "Patronal":euro(g[c][1]),"Total":euro(sum(g[c]))} for c in CATEGORIES]
+        g=category_totals(p)
         sal=sum(v[0] for v in g.values())
         pat=sum(v[1] for v in g.values())
-        detail.append({"Organisme":"TOTAL","Salarial":euro(sal),
-                       "Patronal":euro(pat),"Total":euro(sal+pat)})
+        salaire_brut=p["brut"] or 0
+        patronales=p["pat"] or 0
+        st.metric("Coût salarié (brut + patronales)",euro(salaire_brut+patronales))
+        a,b,c=st.columns(3)
+        a.metric("Salaire brut",euro(salaire_brut))
+        b.metric("Cotisations patronales",euro(patronales))
+        c.metric("Cotisations à reverser",euro(sal+pat))
+        st.caption("Coût hors frais remboursés et sommes hors brut. Les cotisations salariales sont comprises dans le brut.")
+        detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
+                 "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
+        detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
+                       "Patronales":euro(pat),"Total à reverser":euro(sal+pat)})
         st.dataframe(detail,hide_index=True,use_container_width=True)
         if p["delta"]==0:
             st.caption("Contrôle patronal : "+euro(pat)+" calculés / "+
