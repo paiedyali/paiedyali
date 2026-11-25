@@ -80,7 +80,7 @@ def parse(path):
             if code not in MAP:q["unknown"].append(item)
             else:item["group"]=MAP[code];q["lines"].append(item)
     for q in found.values():
-        if not q["lines"] and q["pat"] is None:q["pat"]=0;q["brut"]=q["brut"] or 0
+        if not q["lines"] and q["pat"] is None and q["brut"] == 0:q["pat"]=0
         # Un bulletin de paie nul n'a pas de montant "Versé employeur" imprimé.
         # Quadra laisse ce champ vide ; le coût est bien zéro dans ce cas.
         if q["cout"] is None and q["brut"] == 0 and q["pat"] == 0:
@@ -134,7 +134,7 @@ total_patronal=sum((p["pat"] or 0) for p in people.values())
 total_salarial_classes=sum(v[0] for v in company.values())
 total_patronal_classes=sum(v[1] for v in company.values())
 has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
-missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] for p in people.values())
+missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] or p["pat"] is None for p in people.values())
 repartition_incomplete=has_anomalies or missing_contribution_breakdown
 
 st.subheader("Synthèse de la société")
@@ -155,18 +155,16 @@ if not all_cost_known or not all_net_known:
 if repartition_incomplete:
     st.warning("La lecture des cotisations est incomplète. Les montants par organisme ne doivent pas être considérés comme des sommes nulles.")
 st.markdown("**Cotisations de toute la société par organisme**")
-company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
-               "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c]))} for c in CATEGORIES]
-company_rows.append({"Organisme":"TOTAL","Salariales":euro(total_salarial_classes),
-                     "Patronales":euro(total_patronal_classes),
-                     "Total à reverser":euro(total_salarial_classes+total_patronal_classes)})
 if repartition_incomplete:
-    st.caption("Ventilation provisoire et potentiellement incomplète : les zéros affichés ne signifient pas absence de cotisations.")
-st.dataframe(company_rows,hide_index=True,use_container_width=True)
-
-if repartition_incomplete:
-    st.warning("Résultat provisoire : cotisations non reconnues ou écart patronal sur au moins un bulletin.")
+    st.error("Ventilation indisponible : les montants extraits ne se rapprochent pas du bulletin. Aucun total par organisme n'est présenté comme dû.")
+    st.caption("Le brut et les montants nets restent issus de rubriques distinctes du PDF et ne valident pas les cotisations.")
 else:
+    company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
+                   "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c]))} for c in CATEGORIES]
+    company_rows.append({"Organisme":"TOTAL","Salariales":euro(total_salarial_classes),
+                         "Patronales":euro(total_patronal_classes),
+                         "Total à reverser":euro(total_salarial_classes+total_patronal_classes)})
+    st.dataframe(company_rows,hide_index=True,use_container_width=True)
     st.success("Contrôle patronal : "+euro(total_patronal_classes)+" calculés / "+
                euro(total_patronal)+" sur les bulletins. Écart : 0,00 €.")
 
@@ -180,13 +178,17 @@ for p in people.values():
         a,b,c=st.columns(3)
         a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
-        c.metric("Cotisations sociales totales",euro(sal+pat))
-        detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
-                 "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
-        detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
-                       "Patronales":euro(pat),"Total à reverser":euro(sal+pat)})
-        st.dataframe(detail,hide_index=True,use_container_width=True)
-        if p["delta"]==0:
+        p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
+        c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
+        if p_incomplete:
+            st.error("Répartition par organisme indisponible sur ce bulletin. Détails techniques ci-dessous.")
+        else:
+            detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
+                     "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c]))} for c in CATEGORIES]
+            detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
+                           "Patronales":euro(pat),"Total à reverser":euro(sal+pat)})
+            st.dataframe(detail,hide_index=True,use_container_width=True)
+        if p["delta"]==0 and not p_incomplete:
             st.caption("Contrôle patronal : "+euro(pat)+" calculés / "+
                        euro(p["pat"] or 0)+" sur le bulletin · Écart : 0,00 €")
         else:
@@ -197,32 +199,35 @@ for p in people.values():
             with st.expander("Anomalies techniques"):
                 st.dataframe(p["unknown"],hide_index=True,use_container_width=True)
 
-# Export local de la synthèse : aucune base historique n'est créée.
-import csv
-import io
-csv_buffer=io.StringIO()
-csv_writer=csv.writer(csv_buffer,delimiter=";")
-csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer",
-                     "Coût employeur","Cotisations salariales","Cotisations patronales",
-                     "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
-                     "Statut du contrôle"])
-for person in people.values():
-    categorized=category_totals(person)
-    sal_total=sum(x[0] for x in categorized.values())
-    pat_total=sum(x[1] for x in categorized.values())
-    csv_writer.writerow([
-        next(iter(people))[1],person["nom"] or "Nom non reconnu",person["mat"],
-        euro(person["brut"]) if person["brut"] is not None else "Non déterminé",
-        euro(person["net"]) if person["net"] is not None else "Non déterminé",
-        euro(person["cout"]) if person["cout"] is not None else "Non déterminé",
-        euro(sal_total),euro(pat_total),euro(sal_total+pat_total),
-        *[euro(sum(categorized[category])) for category in CATEGORIES],
-        "A vérifier" if person["unknown"] or person["delta"]!=0 else "Patronal rapproché"
-    ])
-st.download_button("Télécharger le récapitulatif CSV des salariés",
-                   data="\ufeff"+csv_buffer.getvalue(),
-                   file_name="paiedyali_entreprise_recap.csv",
-                   mime="text/csv",use_container_width=True)
-st.caption("Fichier de test : données issues des PDF importés, à vérifier avant utilisation comptable.")
+if repartition_incomplete:
+    st.caption("L'export des montants par organisme est désactivé tant que les cotisations ne sont pas rapprochées.")
+else:
+    # Export local de la synthèse : aucune base historique n'est créée.
+    import csv
+    import io
+    csv_buffer=io.StringIO()
+    csv_writer=csv.writer(csv_buffer,delimiter=";")
+    csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer",
+                         "Coût employeur","Cotisations salariales","Cotisations patronales",
+                         "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
+                         "Statut du contrôle"])
+    for person in people.values():
+        categorized=category_totals(person)
+        sal_total=sum(x[0] for x in categorized.values())
+        pat_total=sum(x[1] for x in categorized.values())
+        csv_writer.writerow([
+            next(iter(people))[1],person["nom"] or "Nom non reconnu",person["mat"],
+            euro(person["brut"]) if person["brut"] is not None else "Non déterminé",
+            euro(person["net"]) if person["net"] is not None else "Non déterminé",
+            euro(person["cout"]) if person["cout"] is not None else "Non déterminé",
+            euro(sal_total),euro(pat_total),euro(sal_total+pat_total),
+            *[euro(sum(categorized[category])) for category in CATEGORIES],
+            "A vérifier" if person["unknown"] or person["delta"]!=0 else "Patronal rapproché"
+        ])
+    st.download_button("Télécharger le récapitulatif CSV des salariés",
+                       data="\ufeff"+csv_buffer.getvalue(),
+                       file_name="paiedyali_entreprise_recap.csv",
+                       mime="text/csv",use_container_width=True)
+    st.caption("Fichier de test : données issues des PDF importés, à vérifier avant utilisation comptable.")
 
 st.caption("URSSAF affichée inclut chômage et AGS. Le tableau des charges reste nécessaire pour valider les rattachements expérimentaux, notamment PRO BTP.")
