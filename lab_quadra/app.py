@@ -63,6 +63,9 @@ def parse(path):
                              if m.start()>px+20]
                     if len(matches)==1:
                         q["cout"]=cents(matches[0])
+            if "NET PAYE" in line:
+                net_paye=re.search(r"NET PAYE\s+(-?\d+\.\d{2})\s+Euros",line)
+                if net_paye:q["net"]=cents(net_paye.group(1))
             if "Net à payer au salarié" in line:
                 values=[v.group(1) for future in ll[index+1:index+8]
                         for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
@@ -71,9 +74,10 @@ def parse(path):
         # Certains bulletins Quadra sont regroupés par sections Q100-Q802 :
         # les lignes de cotisation n'ont alors aucun code E*/SW* individuel.
         q_section=None
-        q_section_line=re.compile(r"^\\s*(Q\\d{3})\\s+")
+        q_section_line=re.compile(r"^\s*(Q\d{3})\s+")
         q_labels={
-            "Q100":{"Sécu.Soc-Mal.Mater.Inval.Déc.":"URSSAF"},
+            "Q100":{"Sécu.Soc-Mal.Mater.Inval.Déc.":"URSSAF",
+                    "Complémentaire Santé":"MUTUELLE"},
             "Q200":{"Acc. du trav. - Mal. prof.":"URSSAF"},
             "Q300":{"Sécu.Soc Plafonnée":"URSSAF",
                     "Sécu.Soc Déplafonnée":"URSSAF",
@@ -94,13 +98,20 @@ def parse(path):
                 q["q_layout"]=True
                 continue
             sal=[v for v in MONEY.finditer(line) if sx-9<=v.start()<px-8]
-            pat=[v for v in MONEY.finditer(line) if px-9<=v.start()<=px+10]
+            pat=[v for v in MONEY.finditer(line) if px-9<=v.start()<=px+14]
             if "SALAIRE BRUT" in line and sal:q["brut"]=cents(sal[-1].group())
             if "TOTAL DES RETENUES" in line and pat:q["pat"]=cents(pat[-1].group())
             hit=CODE.match(line)
-            if not hit and q_section and (sal or pat):
+            # Les frais de repas, acomptes et remboursements ne sont pas des cotisations.
+            if (re.match(r"^\s*(?:S\d{3}|SX\d{2}|BQ[A-Z0-9]+)\s+",line)
+                or line[:sx].strip().startswith("Acompte")):
+                continue
+            if not hit and (q_section or q["q_layout"]) and (sal or pat):
                 # Accepter une rubrique Q seulement si son libellé est explicitement connu.
                 rubric=line[:sx].strip().split('  ')[0].strip()
+                # Dans un bulletin sur deux pages, Q801 peut se poursuivre sans répétition du titre.
+                if q_section is None and q["q_layout"] and rubric == "CSG/CRDS non déductible à l\u0027IR":
+                    q_section="Q801"
                 expected=q_labels.get(q_section,{})
                 # Associer le code Q+libellé sans déduire le recouvreur d'un mot isolé.
                 if rubric in expected:
@@ -202,7 +213,7 @@ st.caption("Cotisations sociales totales : salariales + patronales, hors prélè
 if not all_cost_known or not all_net_known:
     st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
 if any(p["q_layout"] for p in people.values()):
-    st.info("Format Quadra par sections Q détecté : les totaux calculés doivent encore être rapprochés du tableau des charges pour confirmer les organismes de recouvrement.")
+    st.info("Format Quadra par sections Q détecté : la classification par organisme est provisoire. En particulier, Complémentaire Santé est présentée dans Mutuelle par libellé, à confirmer avec le tableau des charges. Le contrôle patronal ne certifie pas les organismes de recouvrement.")
 
 if repartition_incomplete:
     st.warning("La lecture des cotisations est incomplète. Les montants par organisme ne doivent pas être considérés comme des sommes nulles.")
