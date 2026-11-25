@@ -71,6 +71,10 @@ def parse(path):
             else:item["group"]=MAP[code];q["lines"].append(item)
     for q in found.values():
         if not q["lines"] and q["pat"] is None:q["pat"]=0;q["brut"]=q["brut"] or 0
+        # Un bulletin de paie nul n'a pas de montant "Versé employeur" imprimé.
+        # Quadra laisse ce champ vide ; le coût est bien zéro dans ce cas.
+        if q["cout"] is None and q["brut"] == 0 and q["pat"] == 0:
+            q["cout"]=0
         ouvrier=any(x["code"] in {"EQH7","EQH8","EQH9","EQT7"} for x in q["lines"])
         groups=defaultdict(lambda:[0,0])
         for x in q["lines"]:
