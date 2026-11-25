@@ -21,7 +21,7 @@ for group,codes in {
 "PRO_BTP":"EQH2 EQ8O EQDG EWHO EQHR EQHV"}.items():
     for code in codes.split():MAP[code]=group
 MONEY=re.compile(r"-?\d+\.\d{2,4}")
-CODE=re.compile(r"^\s*((?:EQ|EW|SW|E_)[A-Z0-9_]{2,3})\s+(.+)$")
+CODE=re.compile(r"^\s*((?:E[0-9]{3}|(?:EQ|EW|SW|E_)[A-Z0-9_]{2,3}))\s+(.+)$")
 def cents(s):return int((Decimal(s)*100).quantize(Decimal("1")))
 def euro(c):return f"{c/100:,.2f} €".replace(","," ").replace(".",",")
 def parse(path):
@@ -78,14 +78,24 @@ finally:
     if path and path.exists():path.unlink()
 if errors or not people or len(set(x[0] for x in people))!=1 or len(set(x[1] for x in people))!=1:
     st.error("Dossier ou période incohérents, ou lecture incomplète.");st.write(errors);st.stop()
+CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES"]
+LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres"}
+def category_totals(person):
+    totals=defaultdict(lambda:[0,0])
+    for group,amounts in person["groups"].items():
+        if group in {"URSSAF","CHOMAGE"}: display="URSSAF"
+        elif group=="RETRAITE":display="RETRAITE"
+        elif group in {"PREVOYANCE","PREV_COMP","PRO_BTP"}:display="PREVOYANCE"
+        elif group=="MUTUELLE":display="MUTUELLE"
+        else:display="AUTRES"
+        totals[display][0]+=amounts[0]
+        totals[display][1]+=amounts[1]
+    return totals
 rows=[]
 for key,p in people.items():
-    g=defaultdict(lambda:[0,0])
-    for name,v in p["groups"].items():
-        name="URSSAF" if name in {"URSSAF","CHOMAGE"} else ("PREVOYANCE" if name in {"PRO_BTP","PREV_COMP"} else name)
-        g[name][0]+=v[0];g[name][1]+=v[1]
+    g=category_totals(p)
     row={"Matricule":p["mat"],"Brut":euro(p["brut"] or 0),"Patronal":euro(p["pat"] or 0)}
-    for category in ["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE"]:row[category]=euro(sum(g[category]))
+    for c in CATEGORIES:row[LABELS[c]]=euro(sum(g[c]))
     row["Écart patronal"]=euro(p["delta"]) if p["delta"] is not None else "Indéterminé"
     rows.append(row)
 st.subheader("Synthèse par salarié")
@@ -93,8 +103,19 @@ st.dataframe(rows,hide_index=True,use_container_width=True)
 if any(p["unknown"] or p["delta"]!=0 for p in people.values()):
     st.warning("Résultat partiel : cotisations inconnues ou écarts de contrôle. Ne pas utiliser comme ventilation validée.")
 else:st.success("Contrôle du total patronal : conforme aux bulletins.")
+st.subheader("Détail par salarié")
 for p in people.values():
-    with st.expander("Détail matricule "+p["mat"]):
-        st.dataframe([{"Code":x["code"],"Libellé":x["label"],"Groupe provisoire":x["group"],"Salarial":euro(x["sal"]),"Patronal":euro(x["pat"]),"Page":x["page"]} for x in p["lines"]],hide_index=True,use_container_width=True)
-        if p["unknown"]:st.error("Rubriques inconnues");st.dataframe(p["unknown"],hide_index=True)
+    with st.expander("Matricule "+p["mat"],expanded=len(people)==1):
+        g=category_totals(p)
+        detail=[{"Organisme":LABELS[c],"Salarial":euro(g[c][0]),"Patronal":euro(g[c][1]),"Total":euro(sum(g[c]))} for c in CATEGORIES]
+        st.dataframe(detail,hide_index=True,use_container_width=True)
+        st.caption("Cotisations classées : "+euro(sum(sum(v) for v in g.values()))+
+                   " · Patronal bulletin : "+euro(p["pat"] or 0))
+        if p["delta"]!=0:
+            st.warning("Écart patronal : "+(euro(p["delta"]) if p["delta"] is not None else "indéterminé"))
+        if p["unknown"]:
+            st.error(str(len(p["unknown"]))+" rubrique(s) non classée(s).")
+            with st.expander("Anomalies techniques"):
+                st.dataframe(p["unknown"],hide_index=True,use_container_width=True)
+
 st.caption("URSSAF affichée inclut chômage et AGS. Le tableau des charges reste nécessaire pour valider les rattachements expérimentaux, notamment PRO BTP.")
