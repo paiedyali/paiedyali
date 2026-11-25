@@ -35,7 +35,7 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,cout=None))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,cout=None,q_layout=False))
         q["pages"].append(n)
         ll=p.splitlines()
         if not q["nom"]:
@@ -91,6 +91,7 @@ def parse(path):
             section_match=q_section_line.match(line)
             if section_match:
                 q_section=section_match.group(1)
+                q["q_layout"]=True
                 continue
             sal=[v for v in MONEY.finditer(line) if sx-9<=v.start()<px-8]
             pat=[v for v in MONEY.finditer(line) if px-9<=v.start()<=px+10]
@@ -194,6 +195,8 @@ c.metric("Cotisations sociales totales",euro(total_salarial_classes+total_patron
 st.caption("Cotisations sociales totales : salariales + patronales, hors prélèvement à la source. Les cotisations salariales sont déjà incluses dans les salaires bruts.")
 if not all_cost_known or not all_net_known:
     st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
+if any(p["q_layout"] for p in people.values()):
+    st.info("Format Quadra par sections Q détecté : les totaux calculés doivent encore être rapprochés du tableau des charges pour confirmer les organismes de recouvrement.")
 
 if repartition_incomplete:
     st.warning("La lecture des cotisations est incomplète. Les montants par organisme ne doivent pas être considérés comme des sommes nulles.")
