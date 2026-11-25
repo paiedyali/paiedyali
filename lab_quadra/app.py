@@ -86,6 +86,8 @@ def parse(path):
             "Q802":{"EXO., ECRET. ET ALLEG. COTIS":"URSSAF"},
         }
         for line in ll:
+            if "Impôt sur le revenu" in line:
+                q_section=None
             section_match=q_section_line.match(line)
             if section_match:
                 q_section=section_match.group(1)
