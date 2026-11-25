@@ -159,6 +159,24 @@ def parse(path):
             if x["code"] in {"EQDG","EWHO","EQHR","EQHV"} and ouvrier:g="PREV_COMP"
             x["group"]=g
             groups[g][0]+=x["sal"];groups[g][1]+=x["pat"]
+        # Hypothèse expérimentale validée sur ELM 09/2026 :
+        # clé AGIRC-ARRCO 5,40 / 39,20 ; solde à l'URSSAF.
+        # Il s'agit d'une ventilation estimée, PAS d'un taux universel ni
+        # d'une validation des sommes exigibles par les organismes.
+        q["estimated_split"]=None
+        mixed=groups.get("REDUCTION_MIXTE",[0,0])
+        mixed_lines=[x for x in q["lines"] if x["group"]=="REDUCTION_MIXTE"]
+        if (q["q_layout"] and len(mixed_lines)==1
+                and mixed_lines[0]["code"]=="Q802" and mixed[0]==0
+                and mixed[1]<0):
+            reduction=abs(mixed[1])
+            retraite_cents=(reduction*54+196)//392
+            urssaf_cents=reduction-retraite_cents
+            groups["RETRAITE"][1]-=retraite_cents
+            groups["URSSAF"][1]-=urssaf_cents
+            del groups["REDUCTION_MIXTE"]
+            q["estimated_split"]={"total":reduction,"urssaf":urssaf_cents,
+                                  "retraite":retraite_cents}
         q["groups"]=dict(groups)
         q["delta"]=None if q["pat"] is None else sum(x[1] for x in groups.values())-q["pat"]
     return found,errors
@@ -201,10 +219,11 @@ total_patronal=sum((p["pat"] or 0) for p in people.values())
 total_salarial_classes=sum(v[0] for v in company.values())
 total_patronal_classes=sum(v[1] for v in company.values())
 has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
-collector_uncertain=any(x["group"]=="REDUCTION_MIXTE" for p in people.values() for x in p["lines"])
+collector_uncertain=any("REDUCTION_MIXTE" in p["groups"] for p in people.values())
+estimated_collector=any(p["estimated_split"] is not None for p in people.values())
 missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] or p["pat"] is None for p in people.values())
 contributions_incomplete=has_anomalies or missing_contribution_breakdown
-repartition_incomplete=contributions_incomplete or collector_uncertain
+repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
@@ -223,6 +242,8 @@ if not all_cost_known or not all_net_known:
 if any(p["q_layout"] for p in people.values()):
     st.info("Format Q détecté : le regroupement « Complémentaire Santé » et les réductions générales peuvent correspondre à plusieurs organismes. Leur recouvreur exact doit être confirmé.")
 
+if estimated_collector:
+    st.warning("Répartition URSSAF / AGIRC-ARRCO estimée par la clé expérimentale 5,40 / 39,20 sur les lignes Q802. Validée globalement sur ELM 09/2026, non certifiée sur d'autres dossiers. Ne pas utiliser ces montants pour payer les organismes.")
 if contributions_incomplete:
     st.warning("La lecture des cotisations est incomplète : le total social est à vérifier.")
 elif collector_uncertain:
@@ -257,6 +278,8 @@ else:
                          "Patronales":euro(total_patronal_classes),
                          "Total à reverser":euro(total_salarial_classes+total_patronal_classes)})
     st.dataframe(company_rows,hide_index=True,use_container_width=True)
+    if estimated_collector:
+        st.caption("Ventilation indicative : la réduction Q802 est estimée par salarié, avec des écarts possibles de 0,01 € par rapport au détail interne Quadra.")
     st.success("Contrôle patronal : "+euro(total_patronal_classes)+" calculés / "+
                euro(total_patronal)+" sur les bulletins. Écart : 0,00 €.")
 
@@ -267,6 +290,14 @@ for p in people.values():
         sal=sum(v[0] for v in g.values())
         pat=sum(v[1] for v in g.values())
         st.metric("Coût total du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
+        if cout_global and p["cout"] is not None:
+            st.caption("Poids dans le coût global de l'entreprise : "+f'{100*p["cout"]/cout_global:.2f}'.replace(".",",")+" %")
+        if p["estimated_split"] is not None:
+            x=p["estimated_split"]
+            st.info("Réduction générale Q802 estimée : URSSAF "+euro(x["urssaf"])+
+                    " · AGIRC-ARRCO "+euro(x["retraite"])+
+                    " · Total "+euro(x["total"])+
+                    " (clé expérimentale 5,40 / 39,20, arrondi au centime).")
         a,b,c=st.columns(3)
         a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
