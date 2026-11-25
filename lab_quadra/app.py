@@ -226,6 +226,21 @@ collector_uncertain=any("REDUCTION_MIXTE" in p["groups"] for p in people.values(
 estimated_collector=any(p["estimated_split"] is not None for p in people.values())
 missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] or p["pat"] is None for p in people.values())
 contributions_incomplete=has_anomalies or missing_contribution_breakdown
+diagnostics=[]
+for person in people.values():
+    reasons=[]
+    if person["unknown"]:reasons.append(str(len(person["unknown"]))+" rubrique(s) inconnue(s)")
+    if person["pat"] is None:reasons.append("Total patronal absent")
+    elif person["delta"]!=0:reasons.append("Écart patronal : "+euro(person["delta"]))
+    if (person["brut"] or 0)>0 and not person["lines"]:reasons.append("Aucune cotisation reconnue")
+    if "REDUCTION_MIXTE" in person["groups"]:reasons.append("Réduction non répartie")
+    diagnostics.append({"Matricule":person["mat"],
+                        "Salarié":person["nom"] or "Non reconnu",
+                        "Pages PDF":", ".join(map(str,person["pages"])),
+                        "Lignes reconnues":len(person["lines"]),
+                        "Lignes inconnues":len(person["unknown"]),
+                        "Écart patronal":euro(person["delta"]) if person["delta"] is not None else "Indéterminé",
+                        "Statut":" ; ".join(reasons) if reasons else "Rapproché"})
 repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector
 
 st.subheader("Synthèse de la société")
@@ -248,7 +263,7 @@ if any(p["q_layout"] for p in people.values()):
 if estimated_collector:
     st.warning("Répartition URSSAF / AGIRC-ARRCO estimée par la clé expérimentale 5,40 / 39,20 sur les lignes Q802. Validée globalement sur ELM 09/2026, non certifiée sur d'autres dossiers. Ne pas utiliser ces montants pour payer les organismes.")
 if contributions_incomplete:
-    st.warning("La lecture des cotisations est incomplète : le total social est à vérifier.")
+    st.warning("Certaines lignes ne sont pas encore reconnues ou rapprochées. Le diagnostic indique précisément où le moteur bloque.")
 elif collector_uncertain:
     st.info("Total social rapproché avec les bulletins, mais la ventilation par organisme reste indisponible : les réductions générales regroupent URSSAF et retraite.")
 if all_cost_known and cout_global>0:
@@ -260,9 +275,21 @@ if all_cost_known and cout_global>0:
     st.dataframe(rank_rows,hide_index=True,use_container_width=True)
     st.caption("Part du coût global = coût du salarié / coût total employeur × 100. Arrondi à deux décimales.")
 
+if contributions_incomplete:
+    st.subheader("Diagnostic du dossier")
+    st.dataframe(diagnostics,hide_index=True,use_container_width=True)
+    with st.expander("Rubriques à identifier",expanded=True):
+        unknown_rows=[{"Matricule":p["mat"],"Page":x["page"],
+                       "Code":x.get("code") or "Sans code","Libellé":x["label"],
+                       "Salariales":euro(x["sal"]),"Patronales":euro(x["pat"])}
+                      for p in people.values() for x in p["unknown"]]
+        if unknown_rows:st.dataframe(unknown_rows,hide_index=True,use_container_width=True)
+        else:st.info("Aucune rubrique inconnue : contrôler les totaux et colonnes des pages signalées.")
+    st.caption("Les salariés rapprochés restent consultables individuellement. Les totaux société ne sont pas présentés comme validés.")
+
 st.markdown("**Cotisations de toute la société par organisme**")
 if contributions_incomplete:
-    st.warning("La ventilation est masquée : le contrôle des lignes de cotisation n'est pas encore fiable pour ce dossier.")
+    st.warning("Ventilation société non validée. Voir le diagnostic ci-dessus et les salariés rapprochés ci-dessous.")
 elif collector_uncertain:
     st.caption("Montants par famille AVANT répartition de la réduction générale commune URSSAF / AGIRC-ARRCO. Ils ne représentent PAS les sommes nettes dues à chaque organisme.")
     reduction_sal=sum(p["groups"].get("REDUCTION_MIXTE",[0,0])[0] for p in people.values())
