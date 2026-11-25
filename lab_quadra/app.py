@@ -52,7 +52,17 @@ def parse(path):
             if "Versé employeur" in line or "Verse employeur" in line:
                 values=[v.group(1) for future in ll[index+1:index+7]
                         for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
-                if len(values)==1:q["cout"]=cents(values[0])
+                if len(values)==1:
+                    q["cout"]=cents(values[0])
+                elif not values:
+                    # Sur certains bulletins BTP, le montant est à droite
+                    # de la ligne suivante, en regard d'une autre rubrique.
+                    near=ll[index+1:index+3]
+                    matches=[m.group() for row in near
+                             for m in MONEY.finditer(row)
+                             if m.start()>px+20]
+                    if len(matches)==1:
+                        q["cout"]=cents(matches[0])
             if "Net à payer au salarié" in line:
                 values=[v.group(1) for future in ll[index+1:index+8]
                         for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
@@ -273,5 +283,33 @@ for p in people.values():
             st.error(str(len(p["unknown"]))+" rubrique(s) non classée(s).")
             with st.expander("Anomalies techniques"):
                 st.dataframe(p["unknown"],hide_index=True,use_container_width=True)
+
+# Export local de la synthèse : aucune base historique n'est créée.
+import csv
+import io
+csv_buffer=io.StringIO()
+csv_writer=csv.writer(csv_buffer,delimiter=";")
+csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer",
+                     "Coût employeur","Cotisations salariales","Cotisations patronales",
+                     "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
+                     "Statut du contrôle"])
+for person in people.values():
+    categorized=category_totals(person)
+    sal_total=sum(x[0] for x in categorized.values())
+    pat_total=sum(x[1] for x in categorized.values())
+    csv_writer.writerow([
+        next(iter(people))[1],person["nom"] or "Nom non reconnu",person["mat"],
+        euro(person["brut"]) if person["brut"] is not None else "Non déterminé",
+        euro(person["net"]) if person["net"] is not None else "Non déterminé",
+        euro(person["cout"]) if person["cout"] is not None else "Non déterminé",
+        euro(sal_total),euro(pat_total),euro(sal_total+pat_total),
+        *[euro(sum(categorized[category])) for category in CATEGORIES],
+        "A vérifier" if person["unknown"] or person["delta"]!=0 else "Patronal rapproché"
+    ])
+st.download_button("Télécharger le récapitulatif CSV des salariés",
+                   data="\ufeff"+csv_buffer.getvalue(),
+                   file_name="paiedyali_entreprise_recap.csv",
+                   mime="text/csv",use_container_width=True)
+st.caption("Fichier de test : données issues des PDF importés, à vérifier avant utilisation comptable.")
 
 st.caption("URSSAF affichée inclut chômage et AGS. Le tableau des charges reste nécessaire pour valider les rattachements expérimentaux, notamment PRO BTP.")
