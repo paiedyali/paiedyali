@@ -89,9 +89,13 @@ def parse(path):
             "Q801":{"CSG/CRDS non déductible à l'IR":"URSSAF"},
             "Q802":{"EXO., ECRET. ET ALLEG. COTIS":"URSSAF"},
         }
+        in_tax_section=False
         for line in ll:
             if "Impôt sur le revenu" in line:
                 q_section=None
+                in_tax_section=True
+            if in_tax_section:
+                continue
             section_match=q_section_line.match(line)
             if section_match:
                 q_section=section_match.group(1)
@@ -124,7 +128,8 @@ def parse(path):
                 # Ne pas comptabiliser les totaux ou légendes.
                 if rubric and not any(x in rubric.upper() for x in
                    ("TOTAL DES RETENUES","SALAIRE BRUT","NET IMPOSABLE",
-                    "COTIS.","NET A PAYER","MONTANT NET SOCIAL")):
+                    "COTIS.","NET A PAYER","MONTANT NET SOCIAL",
+                    "DONT ÉVOLUTION","IMPÔT SUR LE REVENU")):
                     q["unknown"].append(dict(code=q_section,label=rubric,
                         sal=cents(sal[-1].group()) if sal else 0,
                         pat=cents(pat[-1].group()) if pat else 0,page=n))
