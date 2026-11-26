@@ -3,6 +3,7 @@ from pathlib import Path
 from decimal import Decimal
 from collections import defaultdict
 import streamlit as st
+from reduction_2026 import observed_t1_rate, estimate_standard_split
 st.set_page_config(page_title="PaieDyali Entreprise - laboratoire Quadra",layout="wide")
 st.title("PaieDyali Entreprise - Laboratoire Quadra")
 st.caption("Réservé aux bulletins fictifs de test. Ventilations expérimentales, non certifiées.")
@@ -295,7 +296,9 @@ def parse(path):
                         code=q_section,label=rubric,
                         sal=cents(sal[-1].group()) if sal else 0,
                         pat=cents(pat[-1].group()) if pat else 0,
-                        page=n,group=category))
+                        page=n,group=category,
+                        base=(cents(MONEY.findall(line[:sx])[0])
+                              if MONEY.findall(line[:sx]) else None)))
                     continue
                 # Ne pas comptabiliser les totaux ou légendes.
                 if rubric and not any(x in rubric.upper() for x in
@@ -364,8 +367,25 @@ def parse(path):
                 and mixed_lines[0]["code"]=="Q802" and mixed[0]==0
                 and mixed[1]<0):
             reduction=abs(mixed[1])
-            retraite_cents=(reduction*54+196)//392
-            urssaf_cents=reduction-retraite_cents
+            # Droit commun 2026 : lire la cotisation patronale de
+            # retraite T1, ne jamais déduire ce taux du secteur ou du code.
+            # FNAL 0,10 % reste ici une hypothèse de simulation en labo :
+            # une estimation n'est PAS un paiement certifié.
+            observed_rate=observed_t1_rate(q["lines"])
+            standard=estimate_standard_split(
+                reduction,observed_rate,fnal_rate="0.10")
+            if standard is not None:
+                retraite_cents=standard["retraite"]
+                urssaf_cents=standard["urssaf"]
+                q["split_method"]="simulation 2026 - retraite T1 observée, FNAL 0,10 présumé"
+            else:
+                # Maintien provisoire de l'ancien résultat sur les
+                # répartitions particulières. Ne pas effacer ELM avant de
+                # résoudre ses 20,64 EUR d'écart avec la formule officielle.
+                retraite_cents=(reduction*54+196)//392
+                urssaf_cents=reduction-retraite_cents
+                q["split_method"]="historique expérimental - paramètres à vérifier"
+            q["observed_t1_rate"]=str(observed_rate) if observed_rate is not None else None
             groups["RETRAITE"][1]-=retraite_cents
             groups["URSSAF"][1]-=urssaf_cents
             del groups["REDUCTION_MIXTE"]
