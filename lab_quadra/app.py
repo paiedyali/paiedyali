@@ -38,21 +38,39 @@ def non_contribution(label):
 
 def semantic_group(label,section=None):
     v=normalized_label(label)
-    # Le contexte prime sur les codes E*/Q*, qui sont variables par dossier.
+    # Les codes E, EQ, EW, SW et Q n'identifient pas le collecteur.
+    # Le texte et les regroupements sur le bulletin sont prioritaires.
     if non_contribution(label):return "EXCLUDE"
-    if re.search(r"\bEXO\b.*\b(ALLEG|COTIS)|REDUCTION GENERALE|ALLEGEMENT GENERAL",v):
+
+    # La reduction generale publiee dans une ligne Q peut etre commune
+    # URSSAF + AGIRC; une ligne detaillee doit rester a distinguer.
+    if re.search(r"\bEXO\b.*\b(ALLEG|COTIS)\b|ALLE(G|GE)MENT GENERAL",v):
         return "REDUCTION_MIXTE"
+    if re.search(r"\bREDUCTION\b.*\b(AGIRC|ARRCO)\b",v):
+        return "RETRAITE"
+    if re.search(r"\bREDUCTION (GENERALE|GLE)\b",v):
+        return "REDUCTION_A_QUALIFIER"
+
     if re.search(r"\bMUTUELLE\b|\bFRAIS DE SANTE\b",v):
         return "MUTUELLE"
-    if re.search(r"\bPREVOYANCE\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b",v):
+    if re.search(r"\bPREVOYANCE\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b|\bPARITARISME\b|\bFOND ACTION SOCIALE\b",v):
         return "PREVOYANCE"
-    if re.search(r"\bAPEC\b|\bRETRAITE COMPLEMENTAIRE\b|\bCEG\b|\bCET\b|\bAGIRC\b|\bARRCO\b|\bCOMPLEMENTAIRE TRANCHE\b",v):
+    if re.search(r"\bAPEC\b|\bRETRAITE COMPL\b|\bCEG\b|\bCET\b|\bAGIRC\b|\bARRCO\b|\bCOMPLEMENTAIRE TRANCHE\b",v):
         return "RETRAITE"
-    if re.search(r"\bCHOMAGE\b|\bAGS\b",v):return "CHOMAGE"
+    if re.search(r"\bCHOMAGE\b|\bAGS\b|\bFONDS DE GARANTIE\b",v):
+        return "CHOMAGE"
     if re.search(r"\bCSG\b|\bCRDS\b|\bURSSAF\b|\bSEC(U|URITE) SOC\b|\bACC DU TRAV\b|\bMAL PROF\b",v):
         return "URSSAF"
-    if v=="FAMILLE" or v.startswith("AUTRES CONTRIB DUES PAR EMPL"):return "URSSAF"
-    if "COTISATIONS STATUTAIRES" in v and "CC" in v:return "AUTRES"
+    if re.search(r"\bMALADIE\b|\bMATERN\b|\bSOLIDARITE AUTONOMIE\b|\bFNAL\b|\bDIALOGUE SOCIAL\b",v):
+        return "URSSAF"
+    if re.search(r"\bAF TAUX\b|\bAF COMPLEMENT\b|\bALLOCATIONS FAMILIALES\b",v):
+        return "URSSAF"
+    if re.search(r"\bPARTICIPAT\b.*\bFORMAT\b|\bTAXE APPRENTISSAGE\b",v):
+        return "URSSAF"
+    if v=="FAMILLE" or v.startswith("AUTRES CONTRIB DUES PAR EMPL"):
+        return "URSSAF"
+    if "COTISATIONS STATUTAIRES" in v and "CC" in v:
+        return "AUTRES"
     return None
 
 def parse(path):
@@ -191,6 +209,20 @@ def parse(path):
             q["brut"]=0
             q["pat"]=0
             q["cout"]=0
+        # Test 4 / ancien Quadra : ligne de reduction URSSAF distincte
+        # de la ligne de reduction explicitement AGIRC-ARRCO.
+        has_explicit_agirc_reduction=any(
+            x["group"]=="RETRAITE" and "REDUCTION" in normalized_label(x["label"])
+            for x in q["lines"])
+        for x in list(q["lines"]):
+            if x["group"]=="REDUCTION_A_QUALIFIER":
+                if has_explicit_agirc_reduction:
+                    x["group"]="URSSAF"
+                else:
+                    q["lines"].remove(x)
+                    q["unknown"].append({
+                        "code":x["code"],"label":x["label"],
+                        "sal":x["sal"],"pat":x["pat"],"page":x["page"]})
         groups=defaultdict(lambda:[0,0])
         for x in q["lines"]:
             # Ne pas inférer le statut conventionnel d'un code E ou EQ.
