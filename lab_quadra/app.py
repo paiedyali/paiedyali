@@ -122,6 +122,11 @@ def semantic_group(label,section=None):
         return "CHOMAGE"
     if re.search(r"\bCSG\b|\bCRDS\b|\bURSSAF\b|\bSEC(U|URITE) SOC\b|\bACC DU TRAV\b|\bMAL PROF\b",v):
         return "URSSAF"
+    # Contributions URSSAF par leur objet, pas leur code variable.
+    if re.search(r"\b(VERS|VERSEMENT)\b.*\bMOBILITE\b|\bFORFAIT SOCIAL\b",v):
+        return "URSSAF"
+    if re.search(r"\bREDUCTION\b.*\b(HS|HEURES SUPP|HEURES SUPPLEMENTAIRES)\b",v):
+        return "URSSAF"
     if re.search(r"\bMALADIE\b|\bMATERN\b|\bSOLIDARITE AUTONOMIE\b|\bFNAL\b|\bDIALOGUE SOCIAL\b",v):
         return "URSSAF"
     if re.search(r"\bAF TAUX\b|\bAF COMPLEMENT\b|\bALLOCATIONS FAMILIALES\b",v):
