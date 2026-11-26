@@ -219,6 +219,14 @@ class RegressionSemantics(unittest.TestCase):
         ):
             with self.subTest(label=label):
                 self.assertEqual(semantic_group(label,"Q801"),"EXCLUDE")
+        # AXE DV complet : 8 bulletins affichent une ligne Q100 identique,
+        # sans qu'on puisse compter sur la présence du taux dans le texte.
+        for _ in range(8):
+            self.assertTrue(health_supplement_is_mutuelle(
+                "Complémentaire Santé","Complémentaire Santé",3102,3102))
+        self.assertEqual(8*(3102+3102),49632)
+        self.assertEqual(154548-49632,104916)
+        self.assertEqual(4058551-49632,4008919)
         # Q100: 50/50 a taux 50% = mutuelle a somme fixe.
         self.assertTrue(health_supplement_is_mutuelle(
             "Complémentaire Santé","Complémentaire Santé  62.03  50.0000",3102,3102))
