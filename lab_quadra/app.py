@@ -482,6 +482,38 @@ if contributions_incomplete:
         else:st.info("Aucune rubrique inconnue : contrôler les totaux et colonnes des pages signalées.")
     st.caption("Les salariés rapprochés restent consultables individuellement. Les totaux société ne sont pas présentés comme validés.")
 
+# Les familles indépendantes de la réduction générale doivent rester
+# visibles même si la ventilation URSSAF / retraite est provisoire.
+# Seules les lignes explicitement MUTUELLE / FRAIS DE SANTE entrent ici :
+# « Complémentaire Santé » dépend du contrat et de son collecteur.
+mutuelle_lignes=[
+    (p,x) for p in people.values() for x in p["lines"]
+    if x["group"]=="MUTUELLE"]
+sante_ambigue=[
+    (p,x) for p in people.values() for x in p["lines"]
+    if x["group"]=="PREVOYANCE"
+    and "COMPLEMENTAIRE SANTE" in normalized_label(x["label"])]
+mutuelle_sal=sum(x["sal"] for p,x in mutuelle_lignes)
+mutuelle_pat=sum(x["pat"] for p,x in mutuelle_lignes)
+mutuelle_matricules=set(p["mat"] for p,x in mutuelle_lignes
+                       if x["sal"]!=0 or x["pat"]!=0)
+if mutuelle_lignes:
+    st.subheader("Mutuelle identifiée dans les bulletins")
+    m1,m2,m3=st.columns(3)
+    m1.metric("Cotisations salariales",euro(mutuelle_sal))
+    m2.metric("Cotisations patronales",euro(mutuelle_pat))
+    m3.metric("Total mutuelle identifié",euro(mutuelle_sal+mutuelle_pat))
+    st.caption("Mutuelle identifiée sur "+str(len(mutuelle_matricules))+
+               " salarié(s), d'après les libellés explicites « Mutuelle » ou « Frais de santé ». "+
+               "Ces montants restent visibles même si la répartition URSSAF / retraite est provisoire.")
+else:
+    st.caption("Aucune cotisation explicitement libellée « Mutuelle » ou « Frais de santé » "+
+               "n'a été identifiée. Cela ne prouve pas l'absence de mutuelle dans le dossier.")
+if sante_ambigue:
+    st.caption("À qualifier séparément : "+str(len(sante_ambigue))+
+               " ligne(s) « Complémentaire Santé ». Leur rattachement à la prévoyance "+
+               "ou à la mutuelle ne peut pas être déduit du libellé seul.")
+
 st.markdown("**Cotisations de toute la société par organisme**")
 if contributions_incomplete:
     st.warning("Ventilation société non validée. Voir le diagnostic ci-dessus et les salariés rapprochés ci-dessous.")
