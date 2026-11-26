@@ -87,17 +87,19 @@ def non_contribution(label):
     ))
 
 def health_supplement_is_mutuelle(label,raw_line,sal_amount,pat_amount):
-    """A 50/50 health premium is distinct from ELM's salary-based PREV Q100.
+    """Reconnaître une complémentaire santé partagée également.
 
-    This narrow classification uses the rate and the printed amounts,
-    not any dossier-specific E or Q code. Ambiguous cases keep the
-    existing categorization rather than being moved automatically.
+    Sur AXE DV : 8 primes de 31,02 + 31,02; sur ELM la cotisation
+    "Complémentaire Santé" est 11,52 + 17,28 et reste en prévoyance.
+    Le code Q/E ne joue aucun rôle dans cette décision.
     """
-    if normalized_label(label)!="COMPLEMENTAIRE SANTE":return False
-    if sal_amount<=0 or pat_amount<=0 or abs(sal_amount-pat_amount)>1:return False
-    # Only a genuine premium with a 50% employee rate, not the 0.48/1.24%
-    # salary-based contribution seen in the ELM reference dossier.
-    return bool(re.search(r"(?<!\\d)50\\.0{3,4}(?!\\d)",raw_line))
+    if normalized_label(label)!="COMPLEMENTAIRE SANTE":
+        return False
+    if sal_amount<=0 or pat_amount<=0:
+        return False
+    # Ne pas dépendre d'une colonne taux à position variable dans Quadra.
+    # Une différence de 0,01 EUR est tolérée pour l'arrondi par moitié.
+    return abs(sal_amount-pat_amount)<=1
 
 
 def semantic_group(label,section=None):
