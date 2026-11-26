@@ -28,7 +28,7 @@ def percent(amount, base):
     return (f"{amount * 100 / base:.2f}".replace(".", ",") + " %") if base > 0 else "-"
 
 
-def make_report(siret, period, employees, estimated=False):
+def make_report(siret, period, employees, estimated=False, company_name=None):
     """Return the PDF bytes; employees include cost, gross, net, groups and contribution totals."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=17*mm,
@@ -52,8 +52,10 @@ def make_report(siret, period, employees, estimated=False):
     story = []
     P = lambda value, sty="PDCell": Paragraph(escape(str(value)), styles[sty])
     story += [Paragraph("PaieDyali Entreprise", styles["PDTitle"]),
-              Paragraph("Synthèse mensuelle des coûts salariaux", styles["PDSection"]),
-              Paragraph("Période : " + escape(str(period)) + "  |  SIRET : " + escape(str(siret)),
+              Paragraph("Synthèse mensuelle des coûts salariaux", styles["PDSection"])]
+    if company_name:
+        story.append(Paragraph("Entreprise : "+escape(str(company_name)), styles["Normal"]))
+    story += [Paragraph("Période : " + escape(str(period)) + "  |  SIRET : " + escape(str(siret)),
                         styles["PDSmall"]), Spacer(1, 8*mm)]
 
     cost = sum(e["cost"] for e in employees)
