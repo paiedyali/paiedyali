@@ -101,7 +101,7 @@ def parse(path):
         key=(s.group(1),d.group(1).strip(),m.group(1))
         q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False))
         q["pages"].append(n)
-        company_match=re.search(r"(?im)^\\s*Soci[eé]t[eé]\\s+([^\\n]+)",p)
+        company_match=re.search(r"(?im)^\s*Soci[eé]t[eé]\s+([^\n]+)",p)
         if company_match and not q["company"]:
             q["company"]=company_match.group(1).strip()
         ll=p.splitlines()
@@ -430,7 +430,7 @@ else:
     company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
                    "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c])),
                    "Part des cotisations":pct(sum(company[c]),company_social)} for c in CATEGORIES]
-    company_rows.append({"Organisme":"TOTAL","Salariales":euro(total_salarial_classes),
+    company_rows.append({"Organisme":"TOTAL COTISATIONS SOCIALES","Salariales":euro(total_salarial_classes),
                          "Patronales":euro(total_patronal_classes),
                          "Total à reverser":euro(total_salarial_classes+total_patronal_classes),"Part des cotisations":pct(company_social,company_social)})
     if all_pas_known:
@@ -501,7 +501,7 @@ for p in people.values():
             detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
                      "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c])),
                      "Part des cotisations":pct(sum(g[c]),sal+pat)} for c in CATEGORIES]
-            detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
+            detail.append({"Organisme":"TOTAL COTISATIONS SOCIALES","Salariales":euro(sal),
                            "Patronales":euro(pat),"Total à reverser":euro(sal+pat),"Part des cotisations":pct(sal+pat,sal+pat)})
             if p["pas"] is not None:
                 detail.append({"Organisme":"DGFiP — PAS","Salariales":"—",
