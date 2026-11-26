@@ -538,6 +538,22 @@ if sante_ambigue:
                " ligne(s) « Complémentaire Santé ». Leur rattachement à la prévoyance "+
                "ou à la mutuelle ne peut pas être déduit du libellé seul.")
 
+# Diagnostic autonome à partir des bulletins : aucune donnée du tableau
+# de charges n'est nécessaire pour expliquer une ligne de santé.
+health_rows=[{"Matricule":p["mat"],
+              "Page":x["page"],
+              "Libellé":x["label"],
+              "Salariales":euro(x["sal"]),
+              "Patronales":euro(x["pat"]),
+              "Famille retenue":LABELS.get(x["group"],x["group"])}
+             for p in people.values() for x in p["lines"]
+             if "SANTE" in normalized_label(x["label"])
+             or "MUTUELLE" in normalized_label(x["label"])]
+if health_rows:
+    with st.expander("Contrôle interne des cotisations santé par salarié",expanded=False):
+        st.dataframe(health_rows,hide_index=True,use_container_width=True)
+        st.caption("Contrôle fondé sur les libellés, les taux et les montants lus sur les bulletins, sans numéro de rubrique imposé.")
+
 st.markdown("**Cotisations de toute la société par organisme**")
 if contributions_incomplete:
     st.warning("Ventilation société non validée. Voir le diagnostic ci-dessus et les salariés rapprochés ci-dessous.")
