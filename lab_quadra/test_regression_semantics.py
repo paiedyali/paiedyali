@@ -149,6 +149,21 @@ class RegressionSemantics(unittest.TestCase):
         self.assertEqual(extract_net_salary_block(
             ["Net à payer au salarié (En Euros)","A défaut de Convention Collective"],0),None)
 
+    def test_axe_dv_october_2026(self):
+        """Les codes changent; le libellé et la nature déterminent le collecteur."""
+        cases={
+            "VERS SERVICES MOBILITE ENT >11":"URSSAF",
+            "REDUCTION HS PP > 20":"URSSAF",
+            "FORFAIT SOCIAL":"URSSAF",
+        }
+        for label, group in cases.items():
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label),group)
+        # Écarts patronaux des deux bulletins AXE DV avant correction.
+        self.assertEqual(10239-867+304,9676)
+        self.assertEqual(4066+121,4187)
+        self.assertEqual(9676+4187,13863)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
