@@ -12,7 +12,7 @@ from pathlib import Path
 
 APP=Path(__file__).with_name("app.py")
 TREE=ast.parse(APP.read_text(encoding="utf-8"),filename=str(APP))
-FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas"}
+FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block"}
 NODES=[node for node in TREE.body if isinstance(node,ast.FunctionDef)
        and node.name in FUNCTIONS]
 SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
@@ -20,6 +20,9 @@ SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
 exec(compile(ast.Module(body=NODES,type_ignores=[]),str(APP),"exec"),SCOPE)
 semantic_group=SCOPE["semantic_group"]
 extract_pas=SCOPE["extract_pas"]
+extract_net_before_tax=SCOPE["extract_net_before_tax"]
+extract_net_paye=SCOPE["extract_net_paye"]
+extract_net_salary_block=SCOPE["extract_net_salary_block"]
 
 class RegressionSemantics(unittest.TestCase):
     def test_test4_all_22_distinct_labels(self):
@@ -126,6 +129,25 @@ class RegressionSemantics(unittest.TestCase):
         self.assertEqual(sum(screenshot_differences),17108)
         source=APP.read_text(encoding="utf-8")
         self.assertIn('if normalized_label(line).startswith("DONT EVOLUTION DE LA REMUNERATION"):',source)
+
+    def test_net_reading_old_quadra_and_clarified_payslips(self):
+        self.assertEqual(extract_net_paye("NET PAYE    1 000.00 Euros"),None)
+        self.assertEqual(extract_net_paye("NET PAYE    1884.06 Euros"),188406)
+        self.assertEqual(extract_net_paye("NET PAYE    0.00     Euros"),0)
+        self.assertEqual(extract_net_before_tax("NET A PAYER AVANT IMPOT SUR LE REVENU   3600.84    Total"),360084)
+        self.assertEqual(extract_net_before_tax("NET A PAYER AVANT IMPOT SUR LE REVENU 2072.94"),207294)
+        self.assertEqual(360084-21273,338811)  # INELIT
+        self.assertEqual(207294-1019,206275)  # ELM
+        self.assertEqual(218856-3886,214970) # Juin
+        self.assertEqual(157980-819,157161)  # BTP
+        self.assertEqual(extract_net_salary_block(
+            ["Net à payer au salarié (En Euros)",
+             "Convention collective nationale des bureaux d'études techniques",
+             "cabinets d'ingénieurs-conseils et sociétés de conseils",
+             "           2110.90",
+             "A défaut de Convention Collective"],0),211090)
+        self.assertEqual(extract_net_salary_block(
+            ["Net à payer au salarié (En Euros)","A défaut de Convention Collective"],0),None)
 
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
