@@ -425,6 +425,11 @@ else:
 st.caption("Cotisations sociales totales : salariales + patronales, hors prélèvement à la source. Les cotisations salariales sont déjà incluses dans les salaires bruts.")
 if not all_cost_known or not all_net_known:
     st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
+if not all_net_known:
+    st.error("Net à payer manquant pour : "+", ".join(
+        "matricule "+p["mat"]+" (pages "+", ".join(map(str,p["pages"]))+")"
+        for p in people.values() if p["net"] is None)+
+        ". Aucune valeur à zéro n'a été inventée. Fournir ce bulletin pour adapter la lecture.")
 if inferred_net:
     with st.expander("Contrôle technique du net à payer",expanded=False):
         st.caption("Sur certains bulletins sans ligne NET PAYE exploitable, le net est reconstitué avec le net avant impôt et le prélèvement à la source indiqués sur le même bulletin.")
@@ -436,7 +441,9 @@ if any(p["q_layout"] for p in people.values()):
     st.info("Format Q détecté : le regroupement « Complémentaire Santé » et les réductions générales peuvent correspondre à plusieurs organismes. Leur recouvreur exact doit être confirmé.")
 
 if estimated_collector:
-    st.warning("Répartition URSSAF / AGIRC-ARRCO estimée par la clé expérimentale 5,40 / 39,20 sur les lignes Q802. Validée globalement sur ELM 09/2026, non certifiée sur d'autres dossiers. Ne pas utiliser ces montants pour payer les organismes.")
+    st.caption("Répartition des réductions générales indicative, issue des bulletins. Rapport de gestion, non état officiel de règlement.")
+    with st.expander("Notes techniques internes — ventilation de la réduction générale",expanded=False):
+        st.warning("Clé expérimentale 5,40 / 39,20 sur les Q802. Vérifiée au total sur ELM 09/2026 uniquement ; non validée sur tous les dossiers, notamment Les Délices 10/2026. Ne pas utiliser ces estimations pour régler les organismes.")
 if contributions_incomplete:
     st.warning("Certaines lignes ne sont pas encore reconnues ou rapprochées. Le diagnostic indique précisément où le moteur bloque.")
 elif collector_uncertain:
@@ -530,6 +537,8 @@ for p in people.values():
                     " (clé expérimentale 5,40 / 39,20, arrondi au centime).")
         a,b,c=st.columns(3)
         a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
+        if p["net"] is None:
+            st.caption("Net à payer absent de la lecture du PDF (pages : "+", ".join(map(str,p["pages"]))+").")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
         p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
         p_collector_uncertain="REDUCTION_MIXTE" in p["groups"]
