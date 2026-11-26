@@ -87,7 +87,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         return t
 
     story.append(table([
-        [P("Indicateur","PDCellHead"),P("Montant","PDCellHead")],
+        [P("Indicateur","PDCellHead"),P("Montant","PDCellHeadRight")],
         [P("Coût global des salariés"),P(fmt(cost),"PDCellRight")],
         [P("Net total à payer"),P(fmt(net),"PDCellRight")],
         [P("Masse salariale brute"),P(fmt(gross),"PDCellRight")],
@@ -105,7 +105,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
             company_groups[k][1]+=b
 
     story.append(Paragraph("Répartition des cotisations par organisme",styles["PDSection"]))
-    rows=[[P(x,"PDCellHead") for x in ["Organisme","Salariales","Patronales","Total","Part"]]]
+    rows=[[P("Organisme","PDCellHead")]+[P(x,"PDCellHeadRight") for x in ["Salariales","Patronales","Total","Part"]]]
     for k,label in zip(KEYS,LABELS):
         a,b=company_groups[k]
         rows.append([P(label),P(fmt(a),"PDCellRight"),P(fmt(b),"PDCellRight"),
@@ -114,12 +114,12 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
                  P(fmt(social),"PDCellRight"),P(percent(social,social),"PDCellRight")])
     rows.append([P("DGFiP - PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                  P(fmt(pas),"PDCellRight"),P("-","PDCellRight")])
-    rows.append([P("TOTAL SOCIAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+    rows.append([P("TOTAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                  P(fmt(overall),"PDCellRight"),P("-","PDCellRight")])
     story.append(table(rows,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
 
     story.append(Paragraph("Classement des salariés par coût",styles["PDSection"]))
-    rows=[[P(x,"PDCellHead") for x in ["Salarié","Coût employeur","Part du coût"]]]
+    rows=[[P("Salarié","PDCellHead"),P("Coût employeur","PDCellHeadRight"),P("Part du coût","PDCellHeadRight")]]
     for e in sorted(employees,key=lambda x:x["cost"],reverse=True):
         rows.append([P(e["name"]),P(fmt(e["cost"]),"PDCellRight"),
                      P(percent(e["cost"],cost),"PDCellRight")])
@@ -140,7 +140,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
              P(fmt(e["net"]),"PDCellRight")],
         ],[42*mm]*4))
         section.append(Spacer(1,3*mm))
-        details=[[P(x,"PDCellHead") for x in ["Organisme","Salariales","Patronales","Total","Part"]]]
+        details=[[P("Organisme","PDCellHead")]+[P(x,"PDCellHeadRight") for x in ["Salariales","Patronales","Total","Part"]]]
         for k,label in zip(KEYS,LABELS):
             a,b=e["groups"].get(k,(0,0))
             details.append([P(label),P(fmt(a),"PDCellRight"),P(fmt(b),"PDCellRight"),
@@ -150,7 +150,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
                         P(percent(subtotal,subtotal),"PDCellRight")])
         details.append([P("DGFiP - PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                         P(fmt(e["pas"]),"PDCellRight"),P("-","PDCellRight")])
-        details.append([P("TOTAL SOCIAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+        details.append([P("TOTAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                         P(fmt(with_pas),"PDCellRight"),P("-","PDCellRight")])
         section.append(table(details,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
         section.append(Spacer(1,3*mm))
