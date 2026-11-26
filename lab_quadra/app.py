@@ -50,6 +50,10 @@ def semantic_group(label,section=None):
     # Les codes E, EQ, EW, SW et Q n'identifient pas le collecteur.
     # Le texte et les regroupements sur le bulletin sont prioritaires.
     if non_contribution(label):return "EXCLUDE"
+    # Quadra affiche une ligne informative sous le net, qui cite
+    # "cotisations", "chomage" et "maladie" mais ne constitue pas une charge.
+    # Ne jamais l'assimiler a une rubrique sociale.
+    if v.startswith("DONT EVOLUTION DE LA REMUNERATION"):return "EXCLUDE"
 
     # La reduction generale publiee dans une ligne Q peut etre commune
     # URSSAF + AGIRC; une ligne detaillee doit rester a distinguer.
@@ -191,6 +195,11 @@ def parse(path):
             pat=[v for v in MONEY.finditer(line) if px-9<=v.start()<=px+14]
             if "SALAIRE BRUT" in line and sal:q["brut"]=cents(sal[-1].group())
             if "TOTAL DES RETENUES" in line and pat:q["pat"]=cents(pat[-1].group())
+            # Section de paie terminee : le net et ses explications ne
+            # sont pas des lignes de cotisation, meme si le vocabulaire
+            # contient "chomage" ou "maladie".
+            if normalized_label(line).startswith("DONT EVOLUTION DE LA REMUNERATION"):
+                continue
             hit=CODE.match(line)
             rubric=line[:sx].strip().split("  ")[0].strip() if not hit else hit.group(2).strip().split("  ")[0].strip()
             # Les frais de repas, acomptes et remboursements ne sont pas des cotisations.
