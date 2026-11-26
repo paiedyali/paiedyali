@@ -50,10 +50,19 @@ def semantic_group(label,section=None):
         return "RETRAITE"
     if re.search(r"\bREDUCTION (GENERALE|GLE)\b",v):
         return "REDUCTION_A_QUALIFIER"
+    if re.search(r"\bREDUCTION SALARIALE HS\b|\bREDUCT HEURES SUPPL\b",v):
+        return "URSSAF"
 
     if re.search(r"\bMUTUELLE\b|\bFRAIS DE SANTE\b",v):
         return "MUTUELLE"
-    if re.search(r"\bPREVOYANCE\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b|\bPARITARISME\b|\bFOND ACTION SOCIALE\b",v):
+    # Les contributions conventionnelles BTP ont des descriptions
+    # distinctes du seul numero de rubrique; maintenir leur regroupement
+    # precedent jusqu'a reconciliation avec le tableau des charges.
+    if "BTP" in v and ("CONSTRUCTYS" in v or "APNAB" in v):
+        return "URSSAF" if "TX LEG" in v else "PREVOYANCE"
+    if "BTP" in v and "TAXE CCCA" in v:
+        return "PREVOYANCE"
+    if re.search(r"\bPREVOYANCE\b|\bPREV\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b|\bPARITARISME\b|\bFOND ACTION SOCIALE\b",v):
         return "PREVOYANCE"
     if re.search(r"\bAPEC\b|\bRETRAITE COMPL\b|\bCEG\b|\bCET\b|\bAGIRC\b|\bARRCO\b|\bCOMPLEMENTAIRE TRANCHE\b",v):
         return "RETRAITE"
@@ -65,7 +74,7 @@ def semantic_group(label,section=None):
         return "URSSAF"
     if re.search(r"\bAF TAUX\b|\bAF COMPLEMENT\b|\bALLOCATIONS FAMILIALES\b",v):
         return "URSSAF"
-    if re.search(r"\bPARTICIPAT\b.*\bFORMAT\b|\bTAXE APPRENTISSAGE\b",v):
+    if re.search(r"\bPARTICIPAT\b.*\bFORMAT\b|\bPARTICIP\b.*\bFORM\b|\bTAXE APPRENTISSAGE\b",v):
         return "URSSAF"
     if v=="FAMILLE" or v.startswith("AUTRES CONTRIB DUES PAR EMPL"):
         return "URSSAF"
