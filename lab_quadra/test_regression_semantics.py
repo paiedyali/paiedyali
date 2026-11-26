@@ -196,6 +196,18 @@ class RegressionSemantics(unittest.TestCase):
         # explicitement par net avant impôt - PAS ; sans autre retraitement.
         self.assertEqual(992113-160373,831740)
 
+    def test_mutuelle_visible_without_mixing_with_reduction(self):
+        # AXE DV : l'organisme mutuelle s'identifie au libellé
+        # (non au code E004), même si Q802 est présent ailleurs.
+        self.assertEqual(semantic_group("Frais de santé"),"MUTUELLE")
+        self.assertEqual(semantic_group("MUTUELLE +opt2"),"MUTUELLE")
+        # "Complémentaire Santé" n'est pas un collecteur fiable :
+        # dans ELM une telle ligne relève du bloc prévoyance.
+        self.assertIsNone(semantic_group("Complémentaire Santé","Q100"))
+        source=APP.read_text(encoding="utf-8")
+        self.assertIn('st.subheader("Mutuelle identifiée dans les bulletins")',source)
+        self.assertIn('if x["group"]=="MUTUELLE"',source)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
