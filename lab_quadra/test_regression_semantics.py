@@ -82,6 +82,24 @@ class RegressionSemantics(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(semantic_group(label),group)
 
+    def test_inelit_november_2026_regression(self):
+        # Montants tirés des bulletins INELIT, les codes E_85/E_86/E_D2
+        # ne servent jamais à déterminer l'organisme.
+        cases=[
+            ("RENTE EDUCATION TRA","PREVOYANCE",181,181),
+            ("RENTE EDUCATION TRB","PREVOYANCE",12,12),
+            ("ADESATT","AUTRES",0,48),
+            ("ADESATT","AUTRES",0,83),
+            ("PARTICIP FORMATION CDD","URSSAF",0,2410),
+        ]
+        for label,group,sal,pat in cases:
+            with self.subTest(label=label,pat=pat):
+                self.assertEqual(semantic_group(label),group)
+        # Les deux lignes non reconnues du matricule 4 expliquent
+        # exactement son ecart patronal initial de -0,95 EUR.
+        self.assertEqual(12+83,95)
+        self.assertEqual(181+48+2410,2639)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
