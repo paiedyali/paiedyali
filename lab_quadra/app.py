@@ -62,6 +62,12 @@ def semantic_group(label,section=None):
         return "URSSAF" if "TX LEG" in v else "PREVOYANCE"
     if "BTP" in v and "TAXE CCCA" in v:
         return "PREVOYANCE"
+    if re.search(r"\bRENTE EDUCATION\b",v):
+        return "PREVOYANCE"
+    if re.search(r"\bADESATT\b",v):
+        return "AUTRES"
+    if re.search(r"\bPARTICIP\b.*\bFORMATION CDD\b|\bCPF CDD\b",v):
+        return "URSSAF"
     if re.search(r"\bPREVOYANCE\b|\bPREV\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b|\bPARITARISME\b|\bFOND ACTION SOCIALE\b",v):
         return "PREVOYANCE"
     if re.search(r"\bAPEC\b|\bRETRAITE COMPL\b|\bCEG\b|\bCET\b|\bAGIRC\b|\bARRCO\b|\bCOMPLEMENTAIRE TRANCHE\b",v):
@@ -257,7 +263,7 @@ def parse(path):
             q["estimated_split"]={"total":reduction,"urssaf":urssaf_cents,
                                   "retraite":retraite_cents}
         q["collector_ambiguity"]=any(
-            "COTISATIONS STATUTAIRES" in normalized_label(x["label"])
+            ("COTISATIONS STATUTAIRES" in normalized_label(x["label"]) or "ADESATT" in normalized_label(x["label"]))
             for x in q["lines"])
         q["groups"]=dict(groups)
         q["delta"]=None if q["pat"] is None else sum(x[1] for x in groups.values())-q["pat"]
@@ -417,7 +423,7 @@ for p in people.values():
         cost_col.metric("Coût employeur du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
         share_col.metric("Part du coût total de l’entreprise",pct(p["cout"],cout_global) if p["cout"] is not None else "Non déterminé")
         if p["collector_ambiguity"]:
-            st.warning("« Cotisations statutaires ou CC » : montant affecté provisoirement à « Autres », organisme précis non identifié.")
+            st.warning("Contribution conventionnelle (ADESATT ou cotisations statutaires) regroupée dans « Autres » : collecteur précis non confirmé.")
         if p["estimated_split"] is not None:
             x=p["estimated_split"]
             st.info("Réduction générale Q802 estimée : URSSAF "+euro(x["urssaf"])+
