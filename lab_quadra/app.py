@@ -1,4 +1,4 @@
-import os,re,hmac,tempfile,subprocess
+import os,re,hmac,tempfile,subprocess,unicodedata
 from pathlib import Path
 from decimal import Decimal
 from collections import defaultdict
@@ -27,6 +27,42 @@ def euro(c):return f"{c/100:,.2f} €".replace(","," ").replace(".",",")
 def pct(part,base):
     if base is None or base<=0:return "—"
     return f"{part*100/base:.2f}".replace(".",",")+" %"
+def normalized_label(value):
+    value=unicodedata.normalize("NFKD",value)
+    value="".join(ch for ch in value if not unicodedata.combining(ch))
+    value=value.upper().replace("’","'")
+    return " ".join(re.sub(r"[^A-Z0-9]+"," ",value).split())
+
+def non_contribution(label):
+    # Le code Q de section ne suffit pas : des remboursements figurent
+    # parfois sous Q801 à la suite des cotisations.
+    v=normalized_label(label)
+    return any(re.search(pattern,v) for pattern in (
+        r"\\bINDEMNITE\\b.*\\b(REPAS|PANIER|CASSE CROUTE|TRANSPORT|DEPLACEMENT|RESTAURANT|RESTO)\\b",
+        r"\\bREMBOURSEMENT\\b.*\\bFRAIS\\b",
+        r"\\bFRAIS\\b.*\\b(REPAS|PROFESSIONNELS|DEPLACEMENT)\\b",
+        r"\\bACOMPTE\\b",
+    ))
+
+def semantic_group(label,section=None):
+    v=normalized_label(label)
+    # Le contexte prime sur les codes E*/Q*, qui sont variables par dossier.
+    if non_contribution(label):return "EXCLUDE"
+    if re.search(r"\\bEXO\\b.*\\b(ALLEG|COTIS)|REDUCTION GENERALE|ALLEGEMENT GENERAL",v):
+        return "REDUCTION_MIXTE"
+    if re.search(r"\\bMUTUELLE\\b|\\bFRAIS DE SANTE\\b",v):
+        return "MUTUELLE"
+    if re.search(r"\\bPREVOYANCE\\b|\\bINCAP\\b.*\\bINVAL\\b|\\bIPRIAC\\b|\\bCFA\\b",v):
+        return "PREVOYANCE"
+    if re.search(r"\\bAPEC\\b|\\bRETRAITE COMPLEMENTAIRE\\b|\\bCEG\\b|\\bCET\\b|\\bAGIRC\\b|\\bARRCO\\b|\\bCOMPLEMENTAIRE TRANCHE\\b",v):
+        return "RETRAITE"
+    if re.search(r"\\bCHOMAGE\\b|\\bAGS\\b",v):return "CHOMAGE"
+    if re.search(r"\\bCSG\\b|\\bCRDS\\b|\\bURSSAF\\b|\\bSEC(U|URITE) SOC\\b|\\bACC DU TRAV\\b|\\bMAL PROF\\b",v):
+        return "URSSAF"
+    if v=="FAMILLE" or v.startswith("AUTRES CONTRIB DUES PAR EMPL"):return "URSSAF"
+    if "COTISATIONS STATUTAIRES" in v and "CC" in v:return "AUTRES"
+    return None
+
 def parse(path):
     txt=subprocess.check_output(["pdftotext","-layout",str(path),"-"],timeout=30).decode("utf8")
     pages=[p for p in txt.split("\f") if p.strip()]
@@ -110,24 +146,28 @@ def parse(path):
             if "SALAIRE BRUT" in line and sal:q["brut"]=cents(sal[-1].group())
             if "TOTAL DES RETENUES" in line and pat:q["pat"]=cents(pat[-1].group())
             hit=CODE.match(line)
+            rubric=line[:sx].strip().split("  ")[0].strip() if not hit else hit.group(2).strip().split("  ")[0].strip()
             # Les frais de repas, acomptes et remboursements ne sont pas des cotisations.
             if (re.match(r"^\s*(?:S\d{3}|SX\d{2}|BQ[A-Z0-9]+)\s+",line)
-                or line[:sx].strip().startswith("Acompte")):
+                or line[:sx].strip().startswith("Acompte")
+                or non_contribution(rubric)):
+
                 continue
             if not hit and (q_section or q["q_layout"]) and (sal or pat):
-                # Accepter une rubrique Q seulement si son libellé est explicitement connu.
-                rubric=line[:sx].strip().split('  ')[0].strip()
+                # Une même rubrique peut se trouver sous des sections Q
+                # différentes selon l'activation du module conventionnel.
                 # Dans un bulletin sur deux pages, Q801 peut se poursuivre sans répétition du titre.
                 if q_section is None and q["q_layout"] and rubric == "CSG/CRDS non déductible à l\u0027IR":
                     q_section="Q801"
                 expected=q_labels.get(q_section,{})
                 # Associer le code Q+libellé sans déduire le recouvreur d'un mot isolé.
-                if rubric in expected:
+                category=semantic_group(rubric,q_section) or expected.get(rubric)
+                if category and category!="EXCLUDE":
                     q["lines"].append(dict(
                         code=q_section,label=rubric,
                         sal=cents(sal[-1].group()) if sal else 0,
                         pat=cents(pat[-1].group()) if pat else 0,
-                        page=n,group=expected[rubric]))
+                        page=n,group=category))
                     continue
                 # Ne pas comptabiliser les totaux ou légendes.
                 if rubric and not any(x in rubric.upper() for x in
@@ -141,8 +181,13 @@ def parse(path):
             if not hit or not (sal or pat) or hit.group(1) in {"BQRE","BPM1","SWZW","SX07","S001"}:continue
             code=hit.group(1)
             item=dict(code=code,label=hit.group(2).strip().split("  ")[0],sal=cents(sal[-1].group()) if sal else 0,pat=cents(pat[-1].group()) if pat else 0,page=n)
-            if code not in MAP:q["unknown"].append(item)
-            else:item["group"]=MAP[code];q["lines"].append(item)
+            # Privilégier la signification de la ligne. Les anciens
+            # codes connus restent un repli pour les libellés abrégés.
+            category=semantic_group(item["label"])
+            if category=="EXCLUDE":continue
+            if category is None:category=MAP.get(code)
+            if category is None:q["unknown"].append(item)
+            else:item["group"]=category;q["lines"].append(item)
     for q in found.values():
         # Un bulletin de solde nul peut ne contenir NI SALAIRE BRUT,
         # NI TOTAL DES RETENUES : ne jamais exiger ces deux lignes.
