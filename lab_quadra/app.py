@@ -75,6 +75,7 @@ def non_contribution(label):
         r"\bINDEMNITE\b.*\b(REPAS|PANIER|CASSE CROUTE|TRANSPORT|DEPLACEMENT|RESTAURANT|RESTO)\b",
         r"\bREMBOURSEMENT\b.*\bFRAIS\b",
         r"\bFRAIS\b.*\b(REPAS|PROFESSIONNELS|DEPLACEMENT)\b",
+        r"\bPRIME\b.*\b(PANIER|SALISSURE)\b",
         r"\bACOMPTE\b",
     ))
 
