@@ -5,18 +5,21 @@ Run from repository root:
 """
 import ast
 import re
+from decimal import Decimal
 import unicodedata
 import unittest
 from pathlib import Path
 
 APP=Path(__file__).with_name("app.py")
 TREE=ast.parse(APP.read_text(encoding="utf-8"),filename=str(APP))
-FUNCTIONS={"normalized_label","non_contribution","semantic_group"}
+FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas"}
 NODES=[node for node in TREE.body if isinstance(node,ast.FunctionDef)
        and node.name in FUNCTIONS]
-SCOPE={"re":re,"unicodedata":unicodedata}
+SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
+       "MONEY":re.compile(r"-?\\d+\\.\\d{2,4}")}
 exec(compile(ast.Module(body=NODES,type_ignores=[]),str(APP),"exec"),SCOPE)
 semantic_group=SCOPE["semantic_group"]
+extract_pas=SCOPE["extract_pas"]
 
 class RegressionSemantics(unittest.TestCase):
     def test_test4_all_22_distinct_labels(self):
@@ -99,6 +102,20 @@ class RegressionSemantics(unittest.TestCase):
         # exactement son ecart patronal initial de -0,95 EUR.
         self.assertEqual(12+83,95)
         self.assertEqual(181+48+2410,2639)
+
+    def test_pas_dgfip_extraction_for_references(self):
+        # 4 montants: base, taux, retenue, cumul. Ne pas prendre le cumul.
+        self.assertEqual(extract_pas(
+            "Impôt sur le revenu prélevé à la source 2626.27 8.10 212.73 351.92"),21273)
+        self.assertEqual(extract_pas(
+            "Impôt sur le revenu prélevé à la source 1697.72 0.60 10.19 Paiement"),1019)
+        self.assertEqual(extract_pas(
+            "Impôt sur le revenu prélevé à la source 1630.47 0.00 0.00 0.00"),0)
+        self.assertEqual(extract_pas("Impôt sur le revenu prélevé à la source"),None)
+        self.assertEqual(extract_pas(
+            "Impôt sur le revenu prélevé à la source 1638.26 0.50 8.19 8.19"),819)
+        self.assertEqual(extract_pas(
+            "Impôt sur le revenu prélevé à la source 851.01 0.00 0.00 0.00"),0)
 
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
