@@ -60,6 +60,28 @@ class RegressionSemantics(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(semantic_group(label),group)
 
+    def test_btp_conventional_and_overtime_labels(self):
+        labels={
+            "BTP-PREV CHIRURGIE CADRE TA":"PREVOYANCE",
+            "BTP-PREVOYANCE CADRE OBLIG TA":"PREVOYANCE",
+            "BTP-PREVOYANCE OBLIGAT OUVRIER":"PREVOYANCE",
+            "BTP-PREV HOSP CHIR OUVRIER":"PREVOYANCE",
+            "BTP-CONSTRUCTYS HT Tx convent.":"PREVOYANCE",
+            "BTP-CONSTRUCTYS TVA Tx Conv":"PREVOYANCE",
+            "BTP-APNAB":"PREVOYANCE",
+            "BTP - TAXE CCCA":"PREVOYANCE",
+            "BTP CONSTRUCTYS TX LEG":"URSSAF",
+            "BTP - CSG DEDUCTIBLE OUVRIER":"URSSAF",
+            "PARTICIP FORM ENT <11 BTP":"URSSAF",
+            "TAXE APPRENTISSAGE BTP":"URSSAF",
+            "REDUCTION SALARIALE HS/HC 2019":"URSSAF",
+            "REDUCT HEURES SUPPL. P.P.<= 20":"URSSAF",
+            "APEC TR A":"RETRAITE",
+        }
+        for label,group in labels.items():
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label),group)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
