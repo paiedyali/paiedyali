@@ -12,13 +12,14 @@ from pathlib import Path
 
 APP=Path(__file__).with_name("app.py")
 TREE=ast.parse(APP.read_text(encoding="utf-8"),filename=str(APP))
-FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block"}
+FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block","health_supplement_is_mutuelle"}
 NODES=[node for node in TREE.body if isinstance(node,ast.FunctionDef)
        and node.name in FUNCTIONS]
 SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
        "MONEY":re.compile(r"-?\\d+\\.\\d{2,4}")}
 exec(compile(ast.Module(body=NODES,type_ignores=[]),str(APP),"exec"),SCOPE)
 semantic_group=SCOPE["semantic_group"]
+health_supplement_is_mutuelle=SCOPE["health_supplement_is_mutuelle"]
 extract_pas=SCOPE["extract_pas"]
 extract_net_before_tax=SCOPE["extract_net_before_tax"]
 extract_net_paye=SCOPE["extract_net_paye"]
@@ -207,6 +208,32 @@ class RegressionSemantics(unittest.TestCase):
         source=APP.read_text(encoding="utf-8")
         self.assertIn('st.subheader("Mutuelle identifiée dans les bulletins")',source)
         self.assertIn('if x["group"]=="MUTUELLE"',source)
+
+    def test_q_long_bulletin_health_subtotal_not_counted_twice(self):
+        # Dans un bulletin avec sous-rubriques Q, ce sous-total figure
+        # apres les cotisations. Il ne doit PAS s'additionner une 2e fois.
+        for label in (
+            "Cotis. Retraite/Prév./F.santé",
+            "Cotis. Retraite/Prev./F.sante",
+            "Cotis. Retraite/Prév./F.santé 31.02",
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label,"Q801"),"EXCLUDE")
+        # Q100: 50/50 a taux 50% = mutuelle a somme fixe.
+        self.assertTrue(health_supplement_is_mutuelle(
+            "Complémentaire Santé","Complémentaire Santé  62.03  50.0000",3102,3102))
+        # Q100 ELM: cotisation assise sur brut, taux 1,24 %,
+        # 26,13 salarié + 39,19 patronal -> prévoyance.
+        self.assertFalse(health_supplement_is_mutuelle(
+            "Complémentaire Santé","Complémentaire Santé  2107.10  1.2400",2613,3919))
+        self.assertFalse(health_supplement_is_mutuelle(
+            "Complémentaire Santé","Complémentaire Santé  2400.54  0.4800",1152,1728))
+        # AXE: exactement 496,32 de difference en salariales entre
+        # l'ancienne synthese et le tableau des charges; ne pas coder
+        # un correctif forfaitaire sur cette valeur.
+        self.assertEqual(123828-(49380+24816),49632)
+        self.assertEqual(80352-(55536+24816),0)
+        self.assertEqual(4058551-4008919,49632)
 
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
