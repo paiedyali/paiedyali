@@ -12,14 +12,6 @@ pw=st.text_input("Mot de passe du laboratoire",type="password")
 if not pw or not hmac.compare_digest(pw,secret):
     if pw:st.error("Accès refusé")
     st.stop()
-MAP={}
-for group,codes in {
-"URSSAF":"EQ01 EW7A EQ16 EQ03 EQZ0 EQZ4 EQ05 EQ06 EQ07 EQ5N EQF7 EW27 SW01 SW02 SWB1 SWB3 SWB4 SWB6 EWID EWIF SWA2 SWA4 EW5R EW6X EW7S EW70 EW77 EW79 EW7V EWZB EWA2",
-"CHOMAGE":"EWK1 EQ19","RETRAITE":"EW5A EW6A EWF7 EQ1R",
-"PREVOYANCE":"E002 E006 E007 E_EH E_VQ EQH7 EQH8 EQH9 EQT7",
-"MUTUELLE":"E003 E004",
-"PRO_BTP":"EQH2 EQ8O EQDG EWHO EQHR EQHV"}.items():
-    for code in codes.split():MAP[code]=group
 MONEY=re.compile(r"-?\d+\.\d{2,4}")
 CODE=re.compile(r"^\s*((?:E[0-9]{3}|(?:EQ|EW|SW|E_)[A-Z0-9_]{2,3}))\s+(.+)$")
 def cents(s):return int((Decimal(s)*100).quantize(Decimal("1")))
@@ -181,11 +173,10 @@ def parse(path):
             if not hit or not (sal or pat) or hit.group(1) in {"BQRE","BPM1","SWZW","SX07","S001"}:continue
             code=hit.group(1)
             item=dict(code=code,label=hit.group(2).strip().split("  ")[0],sal=cents(sal[-1].group()) if sal else 0,pat=cents(pat[-1].group()) if pat else 0,page=n)
-            # Privilégier la signification de la ligne. Les anciens
-            # codes connus restent un repli pour les libellés abrégés.
+            # Le code de rubrique est propre au paramétrage du dossier :
+            # il sert au diagnostic, jamais à choisir l'organisme.
             category=semantic_group(item["label"])
             if category=="EXCLUDE":continue
-            if category is None:category=MAP.get(code)
             if category is None:q["unknown"].append(item)
             else:item["group"]=category;q["lines"].append(item)
     for q in found.values():
@@ -200,12 +191,11 @@ def parse(path):
             q["brut"]=0
             q["pat"]=0
             q["cout"]=0
-        ouvrier=any(x["code"] in {"EQH7","EQH8","EQH9","EQT7"} for x in q["lines"])
         groups=defaultdict(lambda:[0,0])
         for x in q["lines"]:
+            # Ne pas inférer le statut conventionnel d'un code E ou EQ.
+            # Les prévoyances reconnues sont regroupées par nature.
             g=x["group"]
-            if x["code"] in {"EQDG","EWHO","EQHR","EQHV"} and ouvrier:g="PREV_COMP"
-            x["group"]=g
             groups[g][0]+=x["sal"];groups[g][1]+=x["pat"]
         # Hypothèse expérimentale validée sur ELM 09/2026 :
         # clé AGIRC-ARRCO 5,40 / 39,20 ; solde à l'URSSAF.
