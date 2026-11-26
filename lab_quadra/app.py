@@ -76,6 +76,8 @@ def non_contribution(label):
         r"\bREMBOURSEMENT\b.*\bFRAIS\b",
         r"\bFRAIS\b.*\b(REPAS|PROFESSIONNELS|DEPLACEMENT)\b",
         r"\bPRIME\b.*\b(PANIER|SALISSURE)\b",
+        # Retenues sur salaire apres cotisations : pas des charges sociales.
+        r"\bSAISIE\b.*\b(ARRET|SUR SALAIRE|REMUNERATION)\b",
         r"\bACOMPTE\b",
     ))
 
