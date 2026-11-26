@@ -183,6 +183,19 @@ class RegressionSemantics(unittest.TestCase):
         # pas dans le total des cotisations.
         self.assertEqual(24300+3621,27921)
 
+    def test_axe_dv_wage_garnishment_not_a_contribution(self):
+        # Lignes Q801 de saisie-arrêt dans l'import AXE DV complet.
+        # Ne jamais compter ces retenues parmi les cotisations sociales,
+        # ni soustraire à nouveau du net déjà imprimé.
+        for label in ("Saisie arrêt", "SAISIE ARRET",
+                      "Saisie sur salaire", "Saisie sur rémunération"):
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label, "Q801"), "EXCLUDE")
+        self.assertEqual(33890+25186+14383,73459)
+        # Le net du matricule 242 (capture technique) reste déterminé
+        # explicitement par net avant impôt - PAS ; sans autre retraitement.
+        self.assertEqual(992113-160373,831740)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
