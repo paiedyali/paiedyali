@@ -356,10 +356,8 @@ def parse(path):
             # Les prévoyances reconnues sont regroupées par nature.
             g=x["group"]
             groups[g][0]+=x["sal"];groups[g][1]+=x["pat"]
-        # Hypothèse expérimentale validée sur ELM 09/2026 :
-        # clé AGIRC-ARRCO 5,40 / 39,20 ; solde à l'URSSAF.
-        # Il s'agit d'une ventilation estimée, PAS d'un taux universel ni
-        # d'une validation des sommes exigibles par les organismes.
+        # La ventilation reste indicative lorsque le bulletin simplifié
+        # contient seulement la réduction globale.
         q["estimated_split"]=None
         mixed=groups.get("REDUCTION_MIXTE",[0,0])
         mixed_lines=[x for x in q["lines"] if x["group"]=="REDUCTION_MIXTE"]
@@ -497,7 +495,7 @@ if any(p["q_layout"] for p in people.values()):
 if estimated_collector:
     st.caption("Répartition des réductions générales indicative, issue des bulletins. Rapport de gestion, non état officiel de règlement.")
     with st.expander("Notes techniques internes — ventilation de la réduction générale",expanded=False):
-        st.warning("Clé expérimentale 5,40 / 39,20 sur les Q802. Vérifiée au total sur ELM 09/2026 uniquement ; non validée sur tous les dossiers, notamment Les Délices 10/2026. Ne pas utiliser ces estimations pour régler les organismes.")
+        st.warning("Droit commun 2026 : simulation d'après le taux patronal T1 imprimé, avec hypothèse FNAL à 0,10 %. En présence de taux dérogatoires ou de DFS (notamment ELM), l'ancienne estimation reste provisoirement conservée pour ne pas casser les dossiers validés. Les sommes dues par organisme restent à confirmer.")
 if contributions_incomplete:
     st.warning("Certaines lignes ne sont pas encore reconnues ou rapprochées. Le diagnostic indique précisément où le moteur bloque.")
 elif collector_uncertain:
@@ -636,7 +634,11 @@ for p in people.values():
             st.info("Réduction générale Q802 estimée : URSSAF "+euro(x["urssaf"])+
                     " · AGIRC-ARRCO "+euro(x["retraite"])+
                     " · Total "+euro(x["total"])+
-                    " (clé expérimentale 5,40 / 39,20, arrondi au centime).")
+                    " (ventilation indicative, arrondie au centime).")
+            with st.expander("Détail technique de la ventilation",expanded=False):
+                st.caption("Méthode : "+p.get("split_method","non déterminée")+
+                           " · Taux T1 patronal observé : "+
+                           str(p.get("observed_t1_rate") or "non identifié")+" %.")
         a,b,c=st.columns(3)
         a.metric("Net à payer",euro(p["net"]) if p["net"] is not None else "Non déterminé")
         if p["net"] is None:
