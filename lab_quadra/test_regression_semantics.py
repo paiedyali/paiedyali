@@ -123,7 +123,7 @@ class RegressionSemantics(unittest.TestCase):
         informational="dont évolution de la rémunération liée à la suppression des cotisations salariales chômage et maladie"
         self.assertEqual(semantic_group(informational),"EXCLUDE")
         screenshot_differences=[3010,803,2755,2755,1532,2755,1204,2294]
-        self.assertEqual(sum(screenshot_differences),17708)
+        self.assertEqual(sum(screenshot_differences),17108)
         source=APP.read_text(encoding="utf-8")
         self.assertIn('if normalized_label(line).startswith("DONT EVOLUTION DE LA REMUNERATION"):',source)
 
