@@ -64,6 +64,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
     sal = sum(e["sal"] for e in employees)
     pat = sum(e["pat"] for e in employees)
     social = sal + pat
+    pas = sum(e["pas"] for e in employees)
+    overall = social + pas
 
     def table(rows, widths, header=True, total=False):
         t = Table(rows, colWidths=widths, repeatRows=1 if header else 0, hAlign="LEFT")
@@ -89,6 +91,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         [P("Masse salariale brute"),P(fmt(gross),"PDCellRight")],
         [P("Cotisations sociales (salariales + patronales, hors PAS)"),
          P(fmt(social),"PDCellRight")],
+        [P("DGFiP - Prélèvement à la source"),P(fmt(pas),"PDCellRight")],
+        [P("Total à reverser (social + PAS)"),P(fmt(overall),"PDCellRight")],
     ], [116*mm,52*mm]))
 
     company_groups={k:[0,0] for k in KEYS}
@@ -106,6 +110,10 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
                      P(fmt(a+b),"PDCellRight"),P(percent(a+b,social),"PDCellRight")])
     rows.append([P("TOTAL"),P(fmt(sal),"PDCellRight"),P(fmt(pat),"PDCellRight"),
                  P(fmt(social),"PDCellRight"),P(percent(social,social),"PDCellRight")])
+    rows.append([P("DGFiP - PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+                 P(fmt(pas),"PDCellRight"),P("-","PDCellRight")])
+    rows.append([P("TOTAL SOCIAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+                 P(fmt(overall),"PDCellRight"),P("-","PDCellRight")])
     story.append(table(rows,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
 
     story.append(Paragraph("Classement des salariés par coût",styles["PDSection"]))
@@ -119,6 +127,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
     story.append(Paragraph("Détail par salarié",styles["PDSection"]))
     for e in sorted(employees,key=lambda x:x["cost"],reverse=True):
         subtotal=e["sal"]+e["pat"]
+        with_pas=subtotal+e["pas"]
         section=[Paragraph(escape(e["name"]+" - Matricule "+str(e["mat"])),styles["PDSection"])]
         section.append(table([
             [P("Coût employeur","PDCellHead"),P("Part du coût","PDCellHead"),
@@ -137,13 +146,18 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         details.append([P("TOTAL"),P(fmt(e["sal"]),"PDCellRight"),
                         P(fmt(e["pat"]),"PDCellRight"),P(fmt(subtotal),"PDCellRight"),
                         P(percent(subtotal,subtotal),"PDCellRight")])
+        details.append([P("DGFiP - PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+                        P(fmt(e["pas"]),"PDCellRight"),P("-","PDCellRight")])
+        details.append([P("TOTAL SOCIAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+                        P(fmt(with_pas),"PDCellRight"),P("-","PDCellRight")])
         section.append(table(details,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
         section.append(Spacer(1,3*mm))
         story.append(KeepTogether(section))
 
     story += [Spacer(1, 8*mm),
               Paragraph("Les parts des salariés sont calculées sur le coût global employeur. "
-              "Les parts des organismes sont calculées sur les cotisations sociales, hors prélèvement à la source.",
+              "Les parts des organismes sont calculées sur les cotisations sociales, hors prélèvement à la source. "
+              "DGFiP - PAS est un prélèvement fiscal distinct, retenu sur le salaire net.",
               styles["PDSmall"])]
     if estimated:
         story.append(Paragraph("Ventilation URSSAF / retraite estimée à partir des bulletins. "
