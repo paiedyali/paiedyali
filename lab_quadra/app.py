@@ -99,8 +99,11 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,cout=None,q_layout=False))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,cout=None,q_layout=False))
         q["pages"].append(n)
+        company_match=re.search(r"(?im)^\\s*Soci[eé]t[eé]\\s+([^\\n]+)",p)
+        if company_match and not q["company"]:
+            q["company"]=company_match.group(1).strip()
         ll=p.splitlines()
         if not q["nom"]:
             for header_line in ll[:38]:
@@ -491,7 +494,8 @@ if pdf_allowed:
         })
     try:
         pdf_bytes=make_report(next(iter(people))[0],next(iter(people))[1],
-                              pdf_employees,estimated=estimated_collector)
+                              pdf_employees,estimated=estimated_collector,
+                              company_name=next(iter(people.values())).get("company"))
         st.download_button("Télécharger le rapport PDF",data=pdf_bytes,
                            file_name="paiedyali_rapport_entreprise.pdf",
                            mime="application/pdf",use_container_width=True)
