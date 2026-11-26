@@ -99,12 +99,26 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,cout=None,q_layout=False))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False))
         q["pages"].append(n)
         company_match=re.search(r"(?im)^\\s*Soci[eé]t[eé]\\s+([^\\n]+)",p)
         if company_match and not q["company"]:
             q["company"]=company_match.group(1).strip()
         ll=p.splitlines()
+        # PAS fiscal : lire la colonne Montant de la section Impot sur le revenu,
+        # jamais la colonne Cumul annuel ni les lignes de cotisations sociales.
+        for tax_line in ll:
+            tax_header=re.search(
+                r"(?i)(?:imp[oô]t sur le revenu pr[eé]lev[eé] [àa] la source|pr[eé]l[eè]vement [àa] la source)",
+                tax_line)
+            if tax_header:
+                nums=MONEY.findall(tax_line[tax_header.end():])
+                if len(nums)>=3:
+                    pas_value=cents(nums[2])
+                    if q["pas"] is not None and q["pas"]!=pas_value:
+                        errors.append("PAS incoherent pour matricule "+q["mat"])
+                    else:
+                        q["pas"]=pas_value
         if not q["nom"]:
             for header_line in ll[:38]:
                 person_name=re.search(r"(?:^|\s)(?:MME|Mme|Mlle|M\.)\s+([A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ\x27 -]{2,})",header_line)
@@ -227,6 +241,7 @@ def parse(path):
             q["brut"]=0
             q["pat"]=0
             q["cout"]=0
+            if q["pas"] is None:q["pas"]=0
         # Test 4 / ancien Quadra : ligne de reduction URSSAF distincte
         # de la ligne de reduction explicitement AGIRC-ARRCO.
         has_explicit_agirc_reduction=any(
@@ -336,6 +351,8 @@ st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
 all_cost_known=all(p["cout"] is not None for p in people.values())
 all_net_known=all(p["net"] is not None for p in people.values())
+all_pas_known=all(p["pas"] is not None for p in people.values())
+total_pas=sum(p["pas"] for p in people.values()) if all_pas_known else None
 cout_global=sum(p["cout"] for p in people.values()) if all_cost_known else None
 net_global=sum(p["net"] for p in people.values()) if all_net_known else None
 st.metric("Coût global des salariés",euro(cout_global) if all_cost_known else "Non déterminé")
@@ -343,6 +360,10 @@ a,b,c=st.columns(3)
 a.metric("Net total à payer",euro(net_global) if all_net_known else "Non déterminé")
 b.metric("Masse salariale brute",euro(total_brut))
 c.metric("Cotisations sociales totales",euro(total_salarial_classes+total_patronal_classes) if not contributions_incomplete else "À vérifier")
+if all_pas_known:
+    st.metric("DGFiP — prélèvement à la source (PAS)",euro(total_pas))
+else:
+    st.warning("Prélèvement à la source non identifiable pour au moins un salarié.")
 st.caption("Cotisations sociales totales : salariales + patronales, hors prélèvement à la source. Les cotisations salariales sont déjà incluses dans les salaires bruts.")
 if not all_cost_known or not all_net_known:
     st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
@@ -363,6 +384,11 @@ if all_cost_known and cout_global>0:
     rank_rows.append({"Salarié":"TOTAL","Matricule":"","Coût employeur":euro(cout_global),"Part du coût global":"100,00 %"})
     st.dataframe(rank_rows,hide_index=True,use_container_width=True)
     st.caption("Part du coût global = coût du salarié / coût total employeur × 100. Arrondi à deux décimales.")
+
+if not contributions_incomplete and all_pas_known:
+    st.metric("Total à reverser aux organismes et à la DGFiP",
+              euro(total_salarial_classes+total_patronal_classes+total_pas))
+    st.caption("Ce total inclut les cotisations sociales et le PAS fiscal. Ne pas ajouter une deuxième fois le PAS au coût employeur ni au net déjà prélevé.")
 
 if contributions_incomplete:
     st.subheader("Diagnostic du dossier")
@@ -407,6 +433,14 @@ else:
     company_rows.append({"Organisme":"TOTAL","Salariales":euro(total_salarial_classes),
                          "Patronales":euro(total_patronal_classes),
                          "Total à reverser":euro(total_salarial_classes+total_patronal_classes),"Part des cotisations":pct(company_social,company_social)})
+    if all_pas_known:
+        company_rows.append({"Organisme":"DGFiP — PAS","Salariales":"—",
+                             "Patronales":"—","Total à reverser":euro(total_pas),
+                             "Part des cotisations":"—"})
+        company_rows.append({"Organisme":"TOTAL SOCIAL + PAS","Salariales":"—",
+                             "Patronales":"—",
+                             "Total à reverser":euro(company_social+total_pas),
+                             "Part des cotisations":"—"})
     st.dataframe(company_rows,hide_index=True,use_container_width=True)
     st.caption("Part des cotisations = total de l’organisme / total social de la société, hors PAS. Ne pas confondre avec un taux sur salaire brut.")
     if estimated_collector:
@@ -435,6 +469,12 @@ for p in people.values():
         p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
         p_collector_uncertain="REDUCTION_MIXTE" in p["groups"]
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
+        if p["pas"] is not None:
+            st.metric("DGFiP — prélèvement à la source",euro(p["pas"]))
+            if not p_incomplete:
+                st.caption("Cotisations + PAS à reverser : "+euro(sal+pat+p["pas"]))
+        else:
+            st.warning("PAS non identifié sur le bulletin de ce salarié.")
         if not p_incomplete and p["brut"] and p["brut"]>0:
             st.metric("Taux de cotisations patronales / brut",pct(pat,p["brut"]))
             st.caption("Taux patronal = cotisations patronales nettes après réductions / salaire brut × 100.")
@@ -463,6 +503,14 @@ for p in people.values():
                      "Part des cotisations":pct(sum(g[c]),sal+pat)} for c in CATEGORIES]
             detail.append({"Organisme":"TOTAL","Salariales":euro(sal),
                            "Patronales":euro(pat),"Total à reverser":euro(sal+pat),"Part des cotisations":pct(sal+pat,sal+pat)})
+            if p["pas"] is not None:
+                detail.append({"Organisme":"DGFiP — PAS","Salariales":"—",
+                               "Patronales":"—","Total à reverser":euro(p["pas"]),
+                               "Part des cotisations":"—"})
+                detail.append({"Organisme":"TOTAL SOCIAL + PAS","Salariales":"—",
+                               "Patronales":"—",
+                               "Total à reverser":euro(sal+pat+p["pas"]),
+                               "Part des cotisations":"—"})
             st.dataframe(detail,hide_index=True,use_container_width=True)
             st.caption("Part des cotisations = cotisations de cet organisme / cotisations totales du salarié. « — » si le total est nul.")
         if p["delta"]==0 and not p_incomplete:
@@ -478,7 +526,7 @@ for p in people.values():
 
 st.subheader("Rapport client PDF")
 pdf_allowed=(not contributions_incomplete and not collector_uncertain
-             and all_cost_known and all_net_known)
+             and all_cost_known and all_net_known and all_pas_known)
 if pdf_allowed:
     from report_pdf import make_report
     pdf_employees=[]
@@ -487,7 +535,7 @@ if pdf_allowed:
         pdf_employees.append({
             "name":person["nom"] or "Matricule "+person["mat"],
             "mat":person["mat"],"gross":person["brut"] or 0,
-            "net":person["net"],"cost":person["cout"],
+            "net":person["net"],"pas":person["pas"],"cost":person["cout"],
             "sal":sum(x[0] for x in g.values()),
             "pat":sum(x[1] for x in g.values()),
             "groups":{key:list(g[key]) for key in CATEGORIES},
@@ -513,7 +561,7 @@ else:
     import io
     csv_buffer=io.StringIO()
     csv_writer=csv.writer(csv_buffer,delimiter=";")
-    csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer",
+    csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer","DGFiP PAS",
                          "Coût employeur","Cotisations salariales","Cotisations patronales",
                          "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
                          "Statut du contrôle"])
@@ -525,6 +573,7 @@ else:
             next(iter(people))[1],person["nom"] or "Nom non reconnu",person["mat"],
             euro(person["brut"]) if person["brut"] is not None else "Non déterminé",
             euro(person["net"]) if person["net"] is not None else "Non déterminé",
+            euro(person["pas"]) if person["pas"] is not None else "Non déterminé",
             euro(person["cout"]) if person["cout"] is not None else "Non déterminé",
             euro(sal_total),euro(pat_total),euro(sal_total+pat_total),
             *[euro(sum(categorized[category])) for category in CATEGORIES],
