@@ -28,6 +28,39 @@ def extract_pas(line):
     # Columns: tax base, rate, withheld amount, optionally annual cumulative.
     if len(nums)<3:return None
     return cents(nums[2])
+def extract_net_before_tax(line):
+    """Montant explicitement imprime avant le PAS (aucune inference)."""
+    m=re.search(r"(?i)NET\s+[AÀ]\s+PAYER\s+AVANT\s+IMP[OÔ]T\s+SUR\s+LE\s+REVENU",line)
+    if not m:return None
+    values=MONEY.findall(line[m.end():])
+    # Montant sur la ligne de titre, avant la colonne laterale "Total".
+    if not values:return None
+    return cents(values[0])
+
+def extract_net_paye(line):
+    """Montant NET PAYE explicitement libelle, avec ou sans Euros."""
+    m=re.search(r"(?i)\bNET\s+PAY[EÉ]\b(?!\s+AVANT)",line)
+    if not m:return None
+    after=line[m.end():]
+    found=re.match(r"\s*:?\s*(-?\d+\.\d{2})(?:\s+Euros)?(?:\s|$)",after)
+    return cents(found.group(1)) if found else None
+
+def extract_net_salary_block(lines,index):
+    """Valeur isolee du bloc 'Net a payer au salarie' des bulletins clarifies."""
+    header=lines[index]
+    m=re.search(r"(?i)Net\s+[àa]\s+payer\s+au\s+salari[eé]",header)
+    if not m:return None
+    same=MONEY.findall(header[m.end():])
+    if len(same)==1:return cents(same[0])
+    # Le montant est souvent sous deux lignes de convention collective.
+    # Ne jamais lire au-dela des mentions legales ou de la page.
+    for line in lines[index+1:index+18]:
+        if re.search(r"(?i)A d[eé]faut de convention|Pour plus d.informations|Dans votre int[eé]r[eê]t",line):
+            break
+        found=re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",line)
+        if found:return cents(found.group(1))
+    return None
+
 def normalized_label(value):
     value=unicodedata.normalize("NFKD",value)
     value="".join(ch for ch in value if not unicodedata.combining(ch))
@@ -112,7 +145,7 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None))
         q["pages"].append(n)
         company_match=re.search(r"(?im)^\s*Soci[eé]t[eé]\s+([^\n]+)",p)
         if company_match and not q["company"]:
@@ -152,13 +185,19 @@ def parse(path):
                              if m.start()>px+20]
                     if len(matches)==1:
                         q["cout"]=cents(matches[0])
-            if "NET PAYE" in line:
-                net_paye=re.search(r"NET PAYE\s+(-?\d+\.\d{2})\s+Euros",line)
-                if net_paye:q["net"]=cents(net_paye.group(1))
-            if "Net à payer au salarié" in line:
-                values=[v.group(1) for future in ll[index+1:index+8]
-                        for v in [re.fullmatch(r"\s*(-?\d+\.\d{2})\s*",future)] if v]
-                if len(values)==1:q["net"]=cents(values[0])
+            # Montants nets : lecture directe en priorite, repli seulement
+            # lorsqu'on dispose du net avant impôt et du PAS explicites.
+            printed_net=extract_net_paye(line)
+            if printed_net is None:
+                printed_net=extract_net_salary_block(ll,index)
+            if printed_net is not None:
+                if q["net"] is not None and q["net"]!=printed_net:
+                    errors.append("Nets contradictoires matricule "+q["mat"])
+                else:
+                    q["net"]=printed_net
+                    q["net_source"]="bulletin"
+            before_tax=extract_net_before_tax(line)
+            if before_tax is not None:q["net_before_tax"]=before_tax
 
         # Certains bulletins Quadra sont regroupés par sections Q100-Q802 :
         # les lignes de cotisation n'ont alors aucun code E*/SW* individuel.
@@ -243,6 +282,11 @@ def parse(path):
             if category is None:q["unknown"].append(item)
             else:item["group"]=category;q["lines"].append(item)
     for q in found.values():
+        # Cette deduction ne s'active jamais si un NET PAYE est lisible.
+        if (q["net"] is None and q["net_before_tax"] is not None
+                and q["pas"] is not None):
+            q["net"]=q["net_before_tax"]-q["pas"]
+            q["net_source"]="calcul net avant PAS - PAS"
         # Un bulletin de solde nul peut ne contenir NI SALAIRE BRUT,
         # NI TOTAL DES RETENUES : ne jamais exiger ces deux lignes.
         # La confirmation vient du net à payer explicitement égal à 0,
@@ -364,6 +408,7 @@ st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
 all_cost_known=all(p["cout"] is not None for p in people.values())
 all_net_known=all(p["net"] is not None for p in people.values())
+inferred_net=any(p["net_source"]=="calcul net avant PAS - PAS" for p in people.values())
 all_pas_known=all(p["pas"] is not None for p in people.values())
 total_pas=sum(p["pas"] for p in people.values()) if all_pas_known else None
 cout_global=sum(p["cout"] for p in people.values()) if all_cost_known else None
@@ -380,6 +425,13 @@ else:
 st.caption("Cotisations sociales totales : salariales + patronales, hors prélèvement à la source. Les cotisations salariales sont déjà incluses dans les salaires bruts.")
 if not all_cost_known or not all_net_known:
     st.warning("Un ou plusieurs montants nets ou coûts employeur ne sont pas identifiables dans les bulletins : les totaux concernés ne sont pas affichés.")
+if inferred_net:
+    with st.expander("Contrôle technique du net à payer",expanded=False):
+        st.caption("Sur certains bulletins sans ligne NET PAYE exploitable, le net est reconstitué avec le net avant impôt et le prélèvement à la source indiqués sur le même bulletin.")
+        st.dataframe([{"Matricule":p["mat"],"Net calculé":euro(p["net"]),
+                       "Net avant impôt":euro(p["net_before_tax"]),"PAS":euro(p["pas"])}
+                      for p in people.values() if p["net_source"]=="calcul net avant PAS - PAS"],
+                     hide_index=True,use_container_width=True)
 if any(p["q_layout"] for p in people.values()):
     st.info("Format Q détecté : le regroupement « Complémentaire Santé » et les réductions générales peuvent correspondre à plusieurs organismes. Leur recouvreur exact doit être confirmé.")
 
