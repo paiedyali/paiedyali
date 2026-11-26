@@ -38,26 +38,26 @@ def non_contribution(label):
     # parfois sous Q801 à la suite des cotisations.
     v=normalized_label(label)
     return any(re.search(pattern,v) for pattern in (
-        r"\\bINDEMNITE\\b.*\\b(REPAS|PANIER|CASSE CROUTE|TRANSPORT|DEPLACEMENT|RESTAURANT|RESTO)\\b",
-        r"\\bREMBOURSEMENT\\b.*\\bFRAIS\\b",
-        r"\\bFRAIS\\b.*\\b(REPAS|PROFESSIONNELS|DEPLACEMENT)\\b",
-        r"\\bACOMPTE\\b",
+        r"\bINDEMNITE\b.*\b(REPAS|PANIER|CASSE CROUTE|TRANSPORT|DEPLACEMENT|RESTAURANT|RESTO)\b",
+        r"\bREMBOURSEMENT\b.*\bFRAIS\b",
+        r"\bFRAIS\b.*\b(REPAS|PROFESSIONNELS|DEPLACEMENT)\b",
+        r"\bACOMPTE\b",
     ))
 
 def semantic_group(label,section=None):
     v=normalized_label(label)
     # Le contexte prime sur les codes E*/Q*, qui sont variables par dossier.
     if non_contribution(label):return "EXCLUDE"
-    if re.search(r"\\bEXO\\b.*\\b(ALLEG|COTIS)|REDUCTION GENERALE|ALLEGEMENT GENERAL",v):
+    if re.search(r"\bEXO\b.*\b(ALLEG|COTIS)|REDUCTION GENERALE|ALLEGEMENT GENERAL",v):
         return "REDUCTION_MIXTE"
-    if re.search(r"\\bMUTUELLE\\b|\\bFRAIS DE SANTE\\b",v):
+    if re.search(r"\bMUTUELLE\b|\bFRAIS DE SANTE\b",v):
         return "MUTUELLE"
-    if re.search(r"\\bPREVOYANCE\\b|\\bINCAP\\b.*\\bINVAL\\b|\\bIPRIAC\\b|\\bCFA\\b",v):
+    if re.search(r"\bPREVOYANCE\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b",v):
         return "PREVOYANCE"
-    if re.search(r"\\bAPEC\\b|\\bRETRAITE COMPLEMENTAIRE\\b|\\bCEG\\b|\\bCET\\b|\\bAGIRC\\b|\\bARRCO\\b|\\bCOMPLEMENTAIRE TRANCHE\\b",v):
+    if re.search(r"\bAPEC\b|\bRETRAITE COMPLEMENTAIRE\b|\bCEG\b|\bCET\b|\bAGIRC\b|\bARRCO\b|\bCOMPLEMENTAIRE TRANCHE\b",v):
         return "RETRAITE"
-    if re.search(r"\\bCHOMAGE\\b|\\bAGS\\b",v):return "CHOMAGE"
-    if re.search(r"\\bCSG\\b|\\bCRDS\\b|\\bURSSAF\\b|\\bSEC(U|URITE) SOC\\b|\\bACC DU TRAV\\b|\\bMAL PROF\\b",v):
+    if re.search(r"\bCHOMAGE\b|\bAGS\b",v):return "CHOMAGE"
+    if re.search(r"\bCSG\b|\bCRDS\b|\bURSSAF\b|\bSEC(U|URITE) SOC\b|\bACC DU TRAV\b|\bMAL PROF\b",v):
         return "URSSAF"
     if v=="FAMILLE" or v.startswith("AUTRES CONTRIB DUES PAR EMPL"):return "URSSAF"
     if "COTISATIONS STATUTAIRES" in v and "CC" in v:return "AUTRES"
