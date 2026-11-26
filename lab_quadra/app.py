@@ -327,7 +327,7 @@ for person in people.values():
                         "Lignes inconnues":len(person["unknown"]),
                         "Écart patronal":euro(person["delta"]) if person["delta"] is not None else "Indéterminé",
                         "Statut":" ; ".join(reasons) if reasons else "Rapproché"})
-repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector or ambiguous_collector
+repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
@@ -346,8 +346,6 @@ if not all_cost_known or not all_net_known:
 if any(p["q_layout"] for p in people.values()):
     st.info("Format Q détecté : le regroupement « Complémentaire Santé » et les réductions générales peuvent correspondre à plusieurs organismes. Leur recouvreur exact doit être confirmé.")
 
-if ambiguous_collector:
-    st.warning("Une ligne « cotisations statutaires ou CC » est classée provisoirement dans « Autres ». Son organisme collecteur exact n'est pas indiqué sur le bulletin : ventilation expérimentale, export désactivé.")
 if estimated_collector:
     st.warning("Répartition URSSAF / AGIRC-ARRCO estimée par la clé expérimentale 5,40 / 39,20 sur les lignes Q802. Validée globalement sur ELM 09/2026, non certifiée sur d'autres dossiers. Ne pas utiliser ces montants pour payer les organismes.")
 if contributions_incomplete:
@@ -422,8 +420,6 @@ for p in people.values():
         cost_col, share_col=st.columns(2)
         cost_col.metric("Coût employeur du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
         share_col.metric("Part du coût total de l’entreprise",pct(p["cout"],cout_global) if p["cout"] is not None else "Non déterminé")
-        if p["collector_ambiguity"]:
-            st.warning("Contribution conventionnelle (ADESATT ou cotisations statutaires) regroupée dans « Autres » : collecteur précis non confirmé.")
         if p["estimated_split"] is not None:
             x=p["estimated_split"]
             st.info("Réduction générale Q802 estimée : URSSAF "+euro(x["urssaf"])+
@@ -476,6 +472,34 @@ for p in people.values():
             st.error(str(len(p["unknown"]))+" rubrique(s) non classée(s).")
             with st.expander("Anomalies techniques"):
                 st.dataframe(p["unknown"],hide_index=True,use_container_width=True)
+
+st.subheader("Rapport client PDF")
+pdf_allowed=(not contributions_incomplete and not collector_uncertain
+             and all_cost_known and all_net_known)
+if pdf_allowed:
+    from report_pdf import make_report
+    pdf_employees=[]
+    for person in people.values():
+        g=category_totals(person)
+        pdf_employees.append({
+            "name":person["nom"] or "Matricule "+person["mat"],
+            "mat":person["mat"],"gross":person["brut"] or 0,
+            "net":person["net"],"cost":person["cout"],
+            "sal":sum(x[0] for x in g.values()),
+            "pat":sum(x[1] for x in g.values()),
+            "groups":{key:list(g[key]) for key in CATEGORIES},
+        })
+    try:
+        pdf_bytes=make_report(next(iter(people))[0],next(iter(people))[1],
+                              pdf_employees,estimated=estimated_collector)
+        st.download_button("Télécharger le rapport PDF",data=pdf_bytes,
+                           file_name="paiedyali_rapport_entreprise.pdf",
+                           mime="application/pdf",use_container_width=True)
+        st.caption("Rapport de gestion fondé sur les bulletins importés. Vérifier les résultats avant transmission au client.")
+    except Exception:
+        st.error("Impossible de préparer le rapport PDF. Vérifier le modèle de rapport.")
+else:
+    st.warning("Rapport PDF indisponible : certains montants ou leur ventilation doivent d'abord être rapprochés avec les bulletins.")
 
 if repartition_incomplete:
     st.caption("L'export des montants par organisme est désactivé tant que les cotisations ne sont pas rapprochées.")
