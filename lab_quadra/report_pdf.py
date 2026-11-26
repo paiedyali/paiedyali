@@ -89,7 +89,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         [P("Masse salariale brute"),P(fmt(gross),"PDCellRight")],
         [P("Cotisations sociales (salariales + patronales, hors PAS)"),
          P(fmt(social),"PDCellRight")],
-    ], [121*mm,55*mm]))
+    ], [116*mm,52*mm]))
 
     company_groups={k:[0,0] for k in KEYS}
     for e in employees:
@@ -106,7 +106,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
                      P(fmt(a+b),"PDCellRight"),P(percent(a+b,social),"PDCellRight")])
     rows.append([P("TOTAL"),P(fmt(sal),"PDCellRight"),P(fmt(pat),"PDCellRight"),
                  P(fmt(social),"PDCellRight"),P(percent(social,social),"PDCellRight")])
-    story.append(table(rows,[35*mm,35*mm,35*mm,43*mm,28*mm],total=True))
+    story.append(table(rows,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
 
     story.append(Paragraph("Classement des salariés par coût",styles["PDSection"]))
     rows=[[P(x,"PDCellHead") for x in ["Salarié","Coût employeur","Part du coût"]]]
@@ -114,7 +114,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         rows.append([P(e["name"]),P(fmt(e["cost"]),"PDCellRight"),
                      P(percent(e["cost"],cost),"PDCellRight")])
     rows.append([P("TOTAL"),P(fmt(cost),"PDCellRight"),P(percent(cost,cost),"PDCellRight")])
-    story.append(table(rows,[94*mm,46*mm,36*mm],total=True))
+    story.append(table(rows,[89*mm,44*mm,35*mm],total=True))
 
     story.append(Paragraph("Détail par salarié",styles["PDSection"]))
     for e in sorted(employees,key=lambda x:x["cost"],reverse=True):
@@ -127,7 +127,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
              P(percent(e["cost"],cost),"PDCellRight"),
              P(fmt(e["gross"]),"PDCellRight"),
              P(fmt(e["net"]),"PDCellRight")],
-        ],[44*mm]*4))
+        ],[42*mm]*4))
         section.append(Spacer(1,3*mm))
         details=[[P(x,"PDCellHead") for x in ["Organisme","Salariales","Patronales","Total","Part"]]]
         for k,label in zip(KEYS,LABELS):
@@ -137,7 +137,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         details.append([P("TOTAL"),P(fmt(e["sal"]),"PDCellRight"),
                         P(fmt(e["pat"]),"PDCellRight"),P(fmt(subtotal),"PDCellRight"),
                         P(percent(subtotal,subtotal),"PDCellRight")])
-        section.append(table(details,[35*mm,35*mm,35*mm,43*mm,28*mm],total=True))
+        section.append(table(details,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
         section.append(Spacer(1,3*mm))
         story.append(KeepTogether(section))
 
