@@ -49,6 +49,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
     styles.add(ParagraphStyle(name="PDCellRight", parent=styles["PDCell"], alignment=TA_RIGHT))
     styles.add(ParagraphStyle(name="PDCellHead", parent=styles["PDCell"],
                  fontName="Helvetica-Bold", textColor=colors.white))
+    styles.add(ParagraphStyle(name="PDCellHeadRight", parent=styles["PDCellHead"],
+                 alignment=TA_RIGHT))
     story = []
     P = lambda value, sty="PDCell": Paragraph(escape(str(value)), styles[sty])
     story += [Paragraph("PaieDyali Entreprise", styles["PDTitle"]),
@@ -130,8 +132,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
         with_pas=subtotal+e["pas"]
         section=[Paragraph(escape(e["name"]+" - Matricule "+str(e["mat"])),styles["PDSection"])]
         section.append(table([
-            [P("Coût employeur","PDCellHead"),P("Part du coût","PDCellHead"),
-             P("Brut","PDCellHead"),P("Net à payer","PDCellHead")],
+            [P("Coût employeur","PDCellHeadRight"),P("Part du coût","PDCellHeadRight"),
+             P("Brut","PDCellHeadRight"),P("Net à payer","PDCellHeadRight")],
             [P(fmt(e["cost"]),"PDCellRight"),
              P(percent(e["cost"],cost),"PDCellRight"),
              P(fmt(e["gross"]),"PDCellRight"),
