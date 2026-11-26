@@ -164,6 +164,25 @@ class RegressionSemantics(unittest.TestCase):
         self.assertEqual(4066+121,4187)
         self.assertEqual(9676+4187,13863)
 
+    def test_axe_dv_full_bundle_allowances_are_not_cotisations(self):
+        # Le meme matricule doit donner la meme ventilation pour un PDF
+        # de 3 pages ou un PDF complet de 25 pages. Les primes SP07/SP08
+        # suivent le net imposable et ne sont jamais des cotisations.
+        for label in (
+            "SP07 Prime de panier",
+            "SP08 Prime de Salissure",
+            "Prime de panier",
+            "Prime de salissure",
+            "INDEMNITE REPAS HORS RESTO",
+        ):
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label,"Q802"),"EXCLUDE")
+        # Ne pas classer tous les SP aveuglement: seul le sens compte.
+        self.assertIsNone(semantic_group("SP10 libelle conventionnel inconnu","Q802"))
+        # Les deux montants de 243 et 36,21 sont inclus dans le net/cout,
+        # pas dans le total des cotisations.
+        self.assertEqual(24300+3621,27921)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
