@@ -225,6 +225,9 @@ def parse(path):
             del groups["REDUCTION_MIXTE"]
             q["estimated_split"]={"total":reduction,"urssaf":urssaf_cents,
                                   "retraite":retraite_cents}
+        q["collector_ambiguity"]=any(
+            "COTISATIONS STATUTAIRES" in normalized_label(x["label"])
+            for x in q["lines"])
         q["groups"]=dict(groups)
         q["delta"]=None if q["pat"] is None else sum(x[1] for x in groups.values())-q["pat"]
     return found,errors
@@ -269,6 +272,7 @@ total_patronal_classes=sum(v[1] for v in company.values())
 has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
 collector_uncertain=any("REDUCTION_MIXTE" in p["groups"] for p in people.values())
 estimated_collector=any(p["estimated_split"] is not None for p in people.values())
+ambiguous_collector=any(p["collector_ambiguity"] for p in people.values())
 missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] or p["pat"] is None for p in people.values())
 contributions_incomplete=has_anomalies or missing_contribution_breakdown
 diagnostics=[]
@@ -286,7 +290,7 @@ for person in people.values():
                         "Lignes inconnues":len(person["unknown"]),
                         "Écart patronal":euro(person["delta"]) if person["delta"] is not None else "Indéterminé",
                         "Statut":" ; ".join(reasons) if reasons else "Rapproché"})
-repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector
+repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector or ambiguous_collector
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
@@ -305,6 +309,8 @@ if not all_cost_known or not all_net_known:
 if any(p["q_layout"] for p in people.values()):
     st.info("Format Q détecté : le regroupement « Complémentaire Santé » et les réductions générales peuvent correspondre à plusieurs organismes. Leur recouvreur exact doit être confirmé.")
 
+if ambiguous_collector:
+    st.warning("Une ligne « cotisations statutaires ou CC » est classée provisoirement dans « Autres ». Son organisme collecteur exact n'est pas indiqué sur le bulletin : ventilation expérimentale, export désactivé.")
 if estimated_collector:
     st.warning("Répartition URSSAF / AGIRC-ARRCO estimée par la clé expérimentale 5,40 / 39,20 sur les lignes Q802. Validée globalement sur ELM 09/2026, non certifiée sur d'autres dossiers. Ne pas utiliser ces montants pour payer les organismes.")
 if contributions_incomplete:
@@ -379,6 +385,8 @@ for p in people.values():
         cost_col, share_col=st.columns(2)
         cost_col.metric("Coût employeur du salarié",euro(p["cout"]) if p["cout"] is not None else "Non déterminé")
         share_col.metric("Part du coût total de l’entreprise",pct(p["cout"],cout_global) if p["cout"] is not None else "Non déterminé")
+        if p["collector_ambiguity"]:
+            st.warning("« Cotisations statutaires ou CC » : montant affecté provisoirement à « Autres », organisme précis non identifié.")
         if p["estimated_split"] is not None:
             x=p["estimated_split"]
             st.info("Réduction générale Q802 estimée : URSSAF "+euro(x["urssaf"])+
