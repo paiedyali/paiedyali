@@ -19,6 +19,15 @@ def euro(c):return f"{c/100:,.2f} €".replace(","," ").replace(".",",")
 def pct(part,base):
     if base is None or base<=0:return "—"
     return f"{part*100/base:.2f}".replace(".",",")+" %"
+
+def extract_pas(line):
+    """Return PAS withholding in cents, or None if the tax line has no amount."""
+    m=re.search(r"(?i)(?:imp[oô]t sur le revenu pr[eé]lev[eé] [àa] la source|pr[eé]l[eè]vement [àa] la source)",line)
+    if not m:return None
+    nums=MONEY.findall(line[m.end():])
+    # Columns: tax base, rate, withheld amount, optionally annual cumulative.
+    if len(nums)<3:return None
+    return cents(nums[2])
 def normalized_label(value):
     value=unicodedata.normalize("NFKD",value)
     value="".join(ch for ch in value if not unicodedata.combining(ch))
@@ -108,17 +117,12 @@ def parse(path):
         # PAS fiscal : lire la colonne Montant de la section Impot sur le revenu,
         # jamais la colonne Cumul annuel ni les lignes de cotisations sociales.
         for tax_line in ll:
-            tax_header=re.search(
-                r"(?i)(?:imp[oô]t sur le revenu pr[eé]lev[eé] [àa] la source|pr[eé]l[eè]vement [àa] la source)",
-                tax_line)
-            if tax_header:
-                nums=MONEY.findall(tax_line[tax_header.end():])
-                if len(nums)>=3:
-                    pas_value=cents(nums[2])
-                    if q["pas"] is not None and q["pas"]!=pas_value:
-                        errors.append("PAS incoherent pour matricule "+q["mat"])
-                    else:
-                        q["pas"]=pas_value
+            pas_value=extract_pas(tax_line)
+            if pas_value is not None:
+                if q["pas"] is not None and q["pas"]!=pas_value:
+                    errors.append("PAS incoherent pour matricule "+q["mat"])
+                else:
+                    q["pas"]=pas_value
         if not q["nom"]:
             for header_line in ll[:38]:
                 person_name=re.search(r"(?:^|\s)(?:MME|Mme|Mlle|M\.)\s+([A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ\x27 -]{2,})",header_line)
