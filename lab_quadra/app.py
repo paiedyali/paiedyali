@@ -186,7 +186,7 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (employee_id and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),employee_id)
-        q=found.setdefault(key,dict(mat=employee_id,nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None,pas_row_seen=False))
+        q=found.setdefault(key,dict(period=d.group(1).strip(),mat=employee_id,nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None,pas_row_seen=False))
         q["pages"].append(n)
         company_match=re.search(r"(?im)^\s*Soci[eé]t[eé]\s+([^\n]+)",p)
         if company_match and not q["company"]:
@@ -383,7 +383,7 @@ def parse(path):
         q["estimated_split"]=None
         mixed=groups.get("REDUCTION_MIXTE",[0,0])
         mixed_lines=[x for x in q["lines"] if x["group"]=="REDUCTION_MIXTE"]
-        if (q["q_layout"] and len(mixed_lines)==1
+        if (re.search(r"\b2026\b",q["period"]) and q["q_layout"] and len(mixed_lines)==1
                 and mixed_lines[0]["code"]=="Q802" and mixed[0]==0
                 and mixed[1]<0):
             reduction=abs(mixed[1])
