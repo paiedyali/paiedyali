@@ -170,18 +170,23 @@ def semantic_group(label,section=None):
         return "AUTRES"
     return None
 
+def extract_employee_id(page_text):
+    """Identifiant de paie : chiffres ou lettres/chiffres, sans numéro SS."""
+    m=re.search(r"(?im)^\s*Matricule\s*:\s*([A-Za-z0-9][A-Za-z0-9_-]{0,31})(?=\s|$)",page_text)
+    return m.group(1) if m else None
+
 def parse(path):
     txt=subprocess.check_output(["pdftotext","-layout",str(path),"-"],timeout=30).decode("utf8")
     pages=[p for p in txt.split("\f") if p.strip()]
     if len(pages)>70:raise ValueError("Trop de pages")
     found={};errors=[]
     for n,p in enumerate(pages,1):
-        m=re.search(r"Matricule\s*:\s*(\d+)",p)
+        employee_id=extract_employee_id(p)
         s=re.search(r"Siret\s*:\s*(\d{14})",p)
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
-        if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
-        key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None,pas_row_seen=False))
+        if not (employee_id and s and d):errors.append("Identité incomplète page "+str(n));continue
+        key=(s.group(1),d.group(1).strip(),employee_id)
+        q=found.setdefault(key,dict(mat=employee_id,nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None,pas_row_seen=False))
         q["pages"].append(n)
         company_match=re.search(r"(?im)^\s*Soci[eé]t[eé]\s+([^\n]+)",p)
         if company_match and not q["company"]:
