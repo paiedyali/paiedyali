@@ -312,5 +312,19 @@ class RegressionSemantics(unittest.TestCase):
         self.assertIn("has_explicit_agirc_reduction",source)
         self.assertIn('x["group"]="URSSAF"',source)
 
+    def test_recent_conventional_contributions(self):
+        for label, group in [
+            ("CONTRIBUTION FARE", "AUTRES"),
+            ("PASS NAVIGO", "EXCLUDE"),
+            ("INDEM. DEPART RETRAITE", "PREVOYANCE"),
+            ("MAINTIEN DE SALAIRE", "PREVOYANCE"),
+            ("INCAPACITE DE TRAVAIL", "PREVOYANCE"),
+            ("FONDS DE PEREQUATION", "PREVOYANCE"),
+            ("F.A.P.S", "PREVOYANCE"),
+            ("RET COMPL CONV AA TU1", "RETRAITE"),
+        ]:
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label), group)
+
 if __name__=="__main__":
     unittest.main()
