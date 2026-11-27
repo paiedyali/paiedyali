@@ -802,3 +802,28 @@ else:
     st.caption("Fichier de test : données issues des PDF importés, à vérifier avant utilisation comptable.")
 
 st.caption("URSSAF affichée inclut chômage et AGS. Le tableau des charges reste nécessaire pour valider les rattachements expérimentaux, notamment PRO BTP.")
+
+
+# Rappel juridique informatif, indépendant des calculs et du rapprochement.
+absence_mutuelle=not any(mutuelle_lignes)
+absence_prevoyance=not any(
+    x["group"] in {"PREVOYANCE","PREV_COMP","PRO_BTP"}
+    for p in people.values() for x in p["lines"])
+if absence_mutuelle or absence_prevoyance:
+    st.subheader("Rappel légal — protection sociale complémentaire")
+    if absence_mutuelle:
+        st.warning("Mutuelle : aucune rubrique explicite identifiée. Dans le secteur privé, "
+                   "l'employeur doit en principe proposer une couverture santé collective et "
+                   "financer au moins 50 % de la couverture obligatoire, sous réserve des exceptions "
+                   "et dispenses applicables. Vérifier les contrats et justificatifs. "
+                   "Article L. 911-7 du Code de la sécurité sociale.")
+        st.markdown("[Référence officielle — complémentaire santé](https://entreprendre.service-public.gouv.fr/vosdroits/F33754)")
+    if absence_prevoyance:
+        st.warning("Prévoyance : aucune rubrique identifiée. Vérifier les obligations de la convention "
+                   "collective et des accords applicables. Pour les cadres et assimilés concernés, "
+                   "l'ANI du 17 novembre 2017 prévoit une contribution patronale exclusive de 1,50 % "
+                   "sur la tranche de rémunération sous le plafond de la Sécurité sociale, "
+                   "affectée prioritairement au risque décès.")
+        st.markdown("[Référence officielle — prévoyance des cadres](https://www.legifrance.gouv.fr/conv_coll/article/KALIARTI000036732016)")
+    st.caption("L'absence de rubrique identifiée ne prouve ni l'absence de couverture ni un manquement. "
+               "Ce rappel ne constitue pas un diagnostic juridique et ne modifie aucun montant.")
