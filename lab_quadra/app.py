@@ -58,7 +58,7 @@ def extract_net_paye(line):
 def extract_net_salary_block(lines,index):
     """Valeur isolee du bloc 'Net a payer au salarie' des bulletins clarifies."""
     header=lines[index]
-    m=re.search(r"(?i)Net\s+[àa]\s+payer\s+au\s+salari[eé]",header)
+    m=re.search(r"(?i)Net\s+[àa]\s+payer(?:\s+au\s+salari[eé]|\s*\(\s*En\s+Euros\s*\))",header)
     if not m:return None
     same=MONEY.findall(header[m.end():])
     if len(same)==1:return cents(same[0])
