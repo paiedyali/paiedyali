@@ -488,7 +488,7 @@ if errors or not people or len(set(x[0] for x in people))!=1 or len(set(x[1] for
 CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES"]
 LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres"}
 def annual_ta(person):
-    return sum(x["pat"] for x in person["lines"] if x["group"]=="URSSAF" and re.search(r"\\bSOLDE (?:DE (?:LA )?)?TAXE (?:D )?APPRENTISSAGE\\b",normalized_label(x["label"])))
+    return sum(x["pat"] for x in person["lines"] if x["group"]=="URSSAF" and re.search(r"\bSOLDE (?:DE (?:LA )?)?TAXE (?:D )?APPRENTISSAGE\b",normalized_label(x["label"])))
 
 def category_totals(person):
     totals=defaultdict(lambda:[0,0])
@@ -710,6 +710,7 @@ st.subheader("Détail par salarié")
 for p in people.values():
     with st.expander((p["nom"] or "Nom non reconnu")+" · Matricule "+p["mat"],expanded=len(people)==1):
         g=category_totals(p)
+        employee_ta=annual_ta(p)
         sal=sum(v[0] for v in g.values())
         pat=sum(v[1] for v in g.values())
         cost_col, share_col=st.columns(2)
@@ -736,7 +737,7 @@ for p in people.values():
         if p["pas"] is not None:
             st.metric("DGFiP — prélèvement à la source",euro(p["pas"]))
             if not p_incomplete:
-                st.caption("Cotisations + PAS à reverser : "+euro(sal+pat+p["pas"]))
+                st.caption("Cotisations + PAS mensuels : "+euro(sal+pat+p["pas"]-employee_ta))
         else:
             st.warning("PAS non identifié sur le bulletin de ce salarié.")
         if not p_incomplete and p["brut"] and p["brut"]>0:
@@ -764,17 +765,19 @@ for p in people.values():
             st.caption("Ventilation indicative avant partage de la réduction générale : pas un état de règlement par organisme.")
         else:
             detail=[{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),
-                     "Patronales":euro(g[c][1]),"Total à reverser":euro(sum(g[c])),
-                     "Part des cotisations":pct(sum(g[c]),sal+pat)} for c in CATEGORIES]
+                     "Patronales":euro(g[c][1]-(employee_ta if c=="URSSAF" else 0)),"Total à reverser":euro(sum(g[c])-(employee_ta if c=="URSSAF" else 0)),
+                     "Part des cotisations":pct(sum(g[c])-(employee_ta if c=="URSSAF" else 0),sal+pat)} for c in CATEGORIES]
+            if employee_ta:
+                detail.append({"Organisme":"Solde TA (annuel)","Salariales":"—","Patronales":euro(employee_ta),"Total à reverser":euro(employee_ta),"Part des cotisations":pct(employee_ta,sal+pat)})
             detail.append({"Organisme":"TOTAL COTISATIONS SOCIALES","Salariales":euro(sal),
                            "Patronales":euro(pat),"Total à reverser":euro(sal+pat),"Part des cotisations":pct(sal+pat,sal+pat)})
             if p["pas"] is not None:
                 detail.append({"Organisme":"DGFiP — PAS","Salariales":"—",
                                "Patronales":"—","Total à reverser":euro(p["pas"]),
                                "Part des cotisations":"—"})
-                detail.append({"Organisme":"TOTAL SOCIAL + PAS","Salariales":"—",
+                detail.append({"Organisme":"TOTAL MENSUEL + PAS","Salariales":"—",
                                "Patronales":"—",
-                               "Total à reverser":euro(sal+pat+p["pas"]),
+                               "Total à reverser":euro(sal+pat+p["pas"]-employee_ta),
                                "Part des cotisations":"—"})
             st.dataframe(detail,hide_index=True,use_container_width=True)
             st.caption("Part des cotisations = cotisations de cet organisme / cotisations totales du salarié. « — » si le total est nul.")
@@ -830,7 +833,7 @@ else:
     csv_writer=csv.writer(csv_buffer,delimiter=";")
     csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer","DGFiP PAS",
                          "Coût employeur","Cotisations salariales","Cotisations patronales",
-                         "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
+                         "Cotisations totales","URSSAF mensuelle","Retraite","Prévoyance","Mutuelle","Autres","Solde TA annuel",
                          "Statut du contrôle"])
     for person in people.values():
         categorized=category_totals(person)
@@ -843,7 +846,8 @@ else:
             euro(person["pas"]) if person["pas"] is not None else "Non déterminé",
             euro(person["cout"]) if person["cout"] is not None else "Non déterminé",
             euro(sal_total),euro(pat_total),euro(sal_total+pat_total),
-            *[euro(sum(categorized[category])) for category in CATEGORIES],
+            *[euro(sum(categorized[category])-(annual_ta(person) if category=="URSSAF" else 0)) for category in CATEGORIES],
+            euro(annual_ta(person)),
             "Ventilation provisoire" if person["unknown"] or "REDUCTION_MIXTE" in person["groups"] or person["estimated_split"] is not None or person["collector_ambiguity"] else "Patronal rapproché"
         ])
     st.download_button("Télécharger le récapitulatif CSV des salariés",
