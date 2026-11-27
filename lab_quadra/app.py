@@ -156,7 +156,7 @@ def semantic_group(label,section=None):
     if "BTP" in v and "TAXE CCCA" in v:
         return "PREVOYANCE"
     # Garanties de remplacement du revenu et indemnites assurees.
-    if re.search(r"^(?:INCAPACITE (?:DE|DU) TRAVAIL|MAINTIEN DE SALAIRE|INDEM(?:NITE)? DEPART RETRAITE)$",v):
+    if re.search(r"^(?:INCAPACITE (?:DE|DU) TRAVAIL|MAINTIEN DE SALAIRE|INDEM(?:NITE)? DEPART RETRAITE(?: (?:TR|TRANCHE) A)?)$",v):
         return "PREVOYANCE"
     if v in {"FONDS DE PEREQUATION","F A P S","FAPS"}:
         return "PREVOYANCE"
