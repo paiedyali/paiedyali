@@ -16,7 +16,7 @@ FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extra
 NODES=[node for node in TREE.body if isinstance(node,ast.FunctionDef)
        and node.name in FUNCTIONS]
 SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
-       "MONEY":re.compile(r"-?\\d+\\.\\d{2,4}")}
+       "MONEY":re.compile(r"-?\d+\.\d{2,4}")}
 exec(compile(ast.Module(body=NODES,type_ignores=[]),str(APP),"exec"),SCOPE)
 semantic_group=SCOPE["semantic_group"]
 health_supplement_is_mutuelle=SCOPE["health_supplement_is_mutuelle"]
@@ -125,9 +125,9 @@ class RegressionSemantics(unittest.TestCase):
 
     def test_salamcom_july_2023_alphanumeric_ids(self):
         sample_pages=[
-            "Siret : 49256889400017  Code NAF: 4778C\\nMatricule :         5                NoSécu.:",
-            "Siret : 49256889400017\\nMatricule : S0002                    NoSécu.:",
-            "Siret : 49256889400017\\nMatricule : S0003                    NoSécu.:",
+            "Siret : 49256889400017  Code NAF: 4778C\nMatricule :         5                NoSécu.:",
+            "Siret : 49256889400017\nMatricule : S0002                    NoSécu.:",
+            "Siret : 49256889400017\nMatricule : S0003                    NoSécu.:",
         ]
         self.assertEqual([extract_employee_id(page) for page in sample_pages],
                          ["5","S0002","S0003"])
@@ -317,6 +317,7 @@ class RegressionSemantics(unittest.TestCase):
             ("CONTRIBUTION FARE", "AUTRES"),
             ("PASS NAVIGO", "EXCLUDE"),
             ("INDEM. DEPART RETRAITE", "PREVOYANCE"),
+            ("INDEM DEPART RETRAITE TR A", "PREVOYANCE"),
             ("MAINTIEN DE SALAIRE", "PREVOYANCE"),
             ("INCAPACITE DE TRAVAIL", "PREVOYANCE"),
             ("FONDS DE PEREQUATION", "PREVOYANCE"),
