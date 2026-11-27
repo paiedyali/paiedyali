@@ -6,4 +6,7 @@ RUN pip install --no-cache-dir -r /app/requirements.txt
 COPY lab_quadra/app.py /app/lab_quadra/app.py
 COPY lab_quadra/report_pdf.py /app/lab_quadra/report_pdf.py
 COPY lab_quadra/reduction_2026.py /app/lab_quadra/reduction_2026.py
+COPY lab_quadra/test_regression_semantics.py /app/lab_quadra/test_regression_semantics.py
+COPY lab_quadra/test_reduction_2026.py /app/lab_quadra/test_reduction_2026.py
+RUN python -m compileall -q lab_quadra && python -m unittest discover -s lab_quadra -p "test_*.py"
 CMD ["sh","-c","streamlit run lab_quadra/app.py --server.address 0.0.0.0 --server.port ${PORT:-10000} --server.headless true --browser.gatherUsageStats false"]
