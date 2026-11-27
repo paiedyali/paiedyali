@@ -396,6 +396,10 @@ def parse(path):
             # Les prévoyances reconnues sont regroupées par nature.
             g=x["group"]
             groups[g][0]+=x["sal"];groups[g][1]+=x["pat"]
+        # Conserver les montants non classés séparément, sans les inventer.
+        for x in q["unknown"]:
+            groups["A_QUALIFIER"][0]+=x["sal"]
+            groups["A_QUALIFIER"][1]+=x["pat"]
         # La ventilation reste indicative lorsque le bulletin simplifié
         # contient seulement la réduction globale.
         q["estimated_split"]=None
@@ -449,8 +453,8 @@ finally:
     if path and path.exists():path.unlink()
 if errors or not people or len(set(x[0] for x in people))!=1 or len(set(x[1] for x in people))!=1:
     st.error("Dossier ou période incohérents, ou lecture incomplète.");st.write(errors);st.stop()
-CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES"]
-LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres"}
+CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES","A_QUALIFIER"]
+LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres","A_QUALIFIER":"Autres — à qualifier"}
 def category_totals(person):
     totals=defaultdict(lambda:[0,0])
     for group,amounts in person["groups"].items():
@@ -458,6 +462,7 @@ def category_totals(person):
         elif group=="RETRAITE":display="RETRAITE"
         elif group in {"PREVOYANCE","PREV_COMP","PRO_BTP"}:display="PREVOYANCE"
         elif group=="MUTUELLE":display="MUTUELLE"
+        elif group=="A_QUALIFIER":display="A_QUALIFIER"
         else:display="AUTRES"
         totals[display][0]+=amounts[0]
         totals[display][1]+=amounts[1]
@@ -473,7 +478,8 @@ total_brut=sum((p["brut"] or 0) for p in people.values())
 total_patronal=sum((p["pat"] or 0) for p in people.values())
 total_salarial_classes=sum(v[0] for v in company.values())
 total_patronal_classes=sum(v[1] for v in company.values())
-has_anomalies=any(p["unknown"] or p["delta"]!=0 for p in people.values())
+has_unknown=any(p["unknown"] for p in people.values())
+has_anomalies=any(p["delta"]!=0 for p in people.values())
 collector_uncertain=any("REDUCTION_MIXTE" in p["groups"] for p in people.values())
 estimated_collector=any(p["estimated_split"] is not None for p in people.values())
 ambiguous_collector=any(p["collector_ambiguity"] for p in people.values())
@@ -554,7 +560,7 @@ if not contributions_incomplete and all_pas_known:
               euro(total_salarial_classes+total_patronal_classes+total_pas))
     st.caption("Ce total inclut les cotisations sociales et le PAS fiscal. Ne pas ajouter une deuxième fois le PAS au coût employeur ni au net déjà prélevé.")
 
-if contributions_incomplete:
+if contributions_incomplete or has_unknown:
     st.subheader("Diagnostic du dossier")
     st.dataframe(diagnostics,hide_index=True,use_container_width=True)
     with st.expander("Rubriques à identifier",expanded=True):
@@ -564,7 +570,7 @@ if contributions_incomplete:
                       for p in people.values() for x in p["unknown"]]
         if unknown_rows:st.dataframe(unknown_rows,hide_index=True,use_container_width=True)
         else:st.info("Aucune rubrique inconnue : contrôler les totaux et colonnes des pages signalées.")
-    st.caption("Les salariés rapprochés restent consultables individuellement. Les totaux société ne sont pas présentés comme validés.")
+    st.caption("Les rubriques à qualifier sont incluses dans les montants extraits. Leur nature et leur organisme restent à vérifier.")
 
 # Les familles indépendantes de la réduction générale doivent rester
 # visibles même si la ventilation URSSAF / retraite est provisoire.
@@ -614,9 +620,12 @@ if health_rows:
         st.dataframe(health_rows,hide_index=True,use_container_width=True)
         st.caption("Contrôle fondé sur les libellés, les taux et les montants lus sur les bulletins, sans numéro de rubrique imposé.")
 
+if has_unknown:
+    st.warning("Ventilation provisoire : les rubriques à qualifier sont incluses dans les totaux extraits. Ne pas utiliser comme état de règlement. Vérifier leur nature, y compris les montants salariaux.")
 st.markdown("**Cotisations de toute la société par organisme**")
 if contributions_incomplete:
-    st.warning("Ventilation société non validée. Voir le diagnostic ci-dessus et les salariés rapprochés ci-dessous.")
+    st.warning("Ventilation non rapprochée : montants extraits ci-dessous, non validés.")
+    st.dataframe([{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),"Patronales":euro(company[c][1]),"Total extrait":euro(sum(company[c]))} for c in CATEGORIES],hide_index=True,use_container_width=True)
 elif collector_uncertain:
     st.caption("Montants par famille AVANT répartition de la réduction générale commune URSSAF / AGIRC-ARRCO. Ils ne représentent PAS les sommes nettes dues à chaque organisme.")
     reduction_sal=sum(p["groups"].get("REDUCTION_MIXTE",[0,0])[0] for p in people.values())
@@ -684,7 +693,7 @@ for p in people.values():
         if p["net"] is None:
             st.caption("Net à payer absent de la lecture du PDF (pages : "+", ".join(map(str,p["pages"]))+").")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
-        p_incomplete=bool(p["unknown"]) or p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
+        p_incomplete=p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
         p_collector_uncertain="REDUCTION_MIXTE" in p["groups"]
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
         if p["pas"] is not None:
@@ -697,7 +706,8 @@ for p in people.values():
             st.metric("Taux de cotisations patronales / brut",pct(pat,p["brut"]))
             st.caption("Taux patronal = cotisations patronales nettes après réductions / salaire brut × 100.")
         if p_incomplete:
-            st.error("Ventilation indisponible : des cotisations sont non reconnues ou ne se rapprochent pas du bulletin.")
+            st.warning("Montants extraits non rapprochés avec le bulletin.")
+            st.dataframe([{"Organisme":LABELS[c],"Salariales":euro(g[c][0]),"Patronales":euro(g[c][1]),"Total extrait":euro(sum(g[c]))} for c in CATEGORIES],hide_index=True,use_container_width=True)
         elif p_collector_uncertain:
             # Le code de réduction commune est suivi indépendamment pour ne pas
             # l'imputer arbitrairement à l'URSSAF ou à la retraite.
@@ -738,12 +748,12 @@ for p in people.values():
             st.warning("Écart patronal à contrôler : "+
                        (euro(p["delta"]) if p["delta"] is not None else "indéterminé"))
         if p["unknown"]:
-            st.error(str(len(p["unknown"]))+" rubrique(s) non classée(s).")
+            st.warning(str(len(p["unknown"]))+" rubrique(s) à qualifier ; montants inclus provisoirement.")
             with st.expander("Anomalies techniques"):
                 st.dataframe(p["unknown"],hide_index=True,use_container_width=True)
 
 st.subheader("Rapport client PDF")
-pdf_allowed=(not contributions_incomplete and not collector_uncertain
+pdf_allowed=(not has_unknown and not contributions_incomplete and not collector_uncertain
              and all_cost_known and all_net_known and all_pas_known)
 if pdf_allowed:
     from report_pdf import make_report
@@ -769,7 +779,7 @@ if pdf_allowed:
     except Exception:
         st.error("Impossible de préparer le rapport PDF. Vérifier le modèle de rapport.")
 else:
-    st.warning("Rapport PDF indisponible : certains montants ou leur ventilation doivent d'abord être rapprochés avec les bulletins.")
+    st.warning("Rapport client PDF indisponible : montants ou affectations à vérifier. Le CSV de gestion reste disponible si les montants sont rapprochés.")
 
 if repartition_incomplete:
     st.caption("L'export des montants par organisme est désactivé tant que les cotisations ne sont pas rapprochées.")
@@ -781,7 +791,7 @@ else:
     csv_writer=csv.writer(csv_buffer,delimiter=";")
     csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer","DGFiP PAS",
                          "Coût employeur","Cotisations salariales","Cotisations patronales",
-                         "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
+                         "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres","Autres à qualifier",
                          "Statut du contrôle"])
     for person in people.values():
         categorized=category_totals(person)
