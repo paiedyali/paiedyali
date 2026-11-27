@@ -29,6 +29,12 @@ def extract_pas(line):
     # Columns: tax base, rate, withheld amount, optionally annual cumulative.
     if len(nums)<3:return None
     return cents(nums[2])
+def infer_zero_pas(pas, tax_row_seen, net, net_before_tax, net_source):
+    """PAS absent seulement si le net explicitement imprimé prouve 0 €."""
+    return (pas is None and tax_row_seen and net_source=="bulletin"
+            and net is not None and net_before_tax is not None
+            and net==net_before_tax)
+
 def extract_net_before_tax(line):
     """Montant explicitement imprime avant le PAS (aucune inference)."""
     m=re.search(r"(?i)NET\s+[AÀ]\s+PAYER\s+AVANT\s+IMP[OÔ]T\s+SUR\s+LE\s+REVENU",line)
@@ -327,10 +333,8 @@ def parse(path):
         # mensuelle nulle est déduite uniquement si le bulletin imprime
         # à la fois le net payé et le net avant impôt, identiques, et
         # comporte réellement une rubrique d'impôt à la source.
-        if (q["pas"] is None and q["pas_row_seen"]
-                and q["net_source"]=="bulletin" and q["net"] is not None
-                and q["net_before_tax"] is not None
-                and q["net"]==q["net_before_tax"]):
+        if infer_zero_pas(q["pas"],q["pas_row_seen"],q["net"],
+                          q["net_before_tax"],q["net_source"]):
             q["pas"]=0
         # Cette deduction ne s'active jamais si un NET PAYE est lisible.
         if (q["net"] is None and q["net_before_tax"] is not None
