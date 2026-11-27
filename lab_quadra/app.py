@@ -487,6 +487,9 @@ if errors or not people or len(set(x[0] for x in people))!=1 or len(set(x[1] for
     st.error("Dossier ou période incohérents, ou lecture incomplète.");st.write(errors);st.stop()
 CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES"]
 LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres"}
+def annual_ta(person):
+    return sum(x["pat"] for x in person["lines"] if x["group"]=="URSSAF" and re.search(r"\\bSOLDE (?:DE (?:LA )?)?TAXE (?:D )?APPRENTISSAGE\\b",normalized_label(x["label"])))
+
 def category_totals(person):
     totals=defaultdict(lambda:[0,0])
     for group,amounts in person["groups"].items():
@@ -505,6 +508,7 @@ for p in people.values():
         company[category][0]+=amounts[0]
         company[category][1]+=amounts[1]
 
+solde_ta=sum(annual_ta(p) for p in people.values())
 total_brut=sum((p["brut"] or 0) for p in people.values())
 total_patronal=sum((p["pat"] or 0) for p in people.values())
 total_salarial_classes=sum(v[0] for v in company.values())
@@ -680,8 +684,10 @@ elif collector_uncertain:
 else:
     company_social=total_salarial_classes+total_patronal_classes
     company_rows=[{"Organisme":LABELS[c],"Salariales":euro(company[c][0]),
-                   "Patronales":euro(company[c][1]),"Total à reverser":euro(sum(company[c])),
-                   "Part des cotisations":pct(sum(company[c]),company_social)} for c in CATEGORIES]
+                   "Patronales":euro(company[c][1]-(solde_ta if c=="URSSAF" else 0)),"Total à reverser":euro(sum(company[c])-(solde_ta if c=="URSSAF" else 0)),
+                   "Part des cotisations":pct(sum(company[c])-(solde_ta if c=="URSSAF" else 0),company_social)} for c in CATEGORIES]
+    if solde_ta:
+        company_rows.append({"Organisme":"Solde TA (annuel)","Salariales":"—","Patronales":euro(solde_ta),"Total à reverser":euro(solde_ta),"Part des cotisations":pct(solde_ta,company_social)})
     company_rows.append({"Organisme":"TOTAL COTISATIONS SOCIALES","Salariales":euro(total_salarial_classes),
                          "Patronales":euro(total_patronal_classes),
                          "Total à reverser":euro(total_salarial_classes+total_patronal_classes),"Part des cotisations":pct(company_social,company_social)})
@@ -689,9 +695,9 @@ else:
         company_rows.append({"Organisme":"DGFiP — PAS","Salariales":"—",
                              "Patronales":"—","Total à reverser":euro(total_pas),
                              "Part des cotisations":"—"})
-        company_rows.append({"Organisme":"TOTAL SOCIAL + PAS","Salariales":"—",
+        company_rows.append({"Organisme":"TOTAL MENSUEL + PAS","Salariales":"—",
                              "Patronales":"—",
-                             "Total à reverser":euro(company_social+total_pas),
+                             "Total à reverser":euro(company_social+total_pas-solde_ta),
                              "Part des cotisations":"—"})
     st.dataframe(company_rows,hide_index=True,use_container_width=True)
     st.caption("Part des cotisations = total de l’organisme / total social de la société, hors PAS. Ne pas confondre avec un taux sur salaire brut.")
@@ -724,7 +730,7 @@ for p in people.values():
         if p["net"] is None:
             st.caption("Net à payer absent de la lecture du PDF (pages : "+", ".join(map(str,p["pages"]))+").")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
-        p_incomplete=p["delta"]!=0 or ((p["brut"] or 0)>0 and not (p["lines"] or p["unknown"]))
+        p_incomplete=(p["delta"] is None or abs(p["delta"])>1) or ((p["brut"] or 0)>0 and not (p["lines"] or p["unknown"]))
         p_collector_uncertain="REDUCTION_MIXTE" in p["groups"]
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
         if p["pas"] is not None:
@@ -798,6 +804,7 @@ if pdf_allowed:
             "sal":sum(x[0] for x in g.values()),
             "pat":sum(x[1] for x in g.values()),
             "groups":{key:list(g[key]) for key in CATEGORIES},
+            "annual_ta":annual_ta(person),
         })
     try:
         pdf_bytes=make_report(next(iter(people))[0],next(iter(people))[1],
@@ -845,6 +852,8 @@ else:
                        mime="text/csv",use_container_width=True)
     st.caption("Fichier de test : données issues des PDF importés, à vérifier avant utilisation comptable.")
 
+if solde_ta:
+    st.caption("Solde TA : "+euro(solde_ta)+" comptabilisés ce mois, paiement annuel en mai N+1. Inclus dans le total des charges.")
 st.caption("URSSAF affichée inclut chômage et AGS. Le tableau des charges reste nécessaire pour valider les rattachements expérimentaux, notamment PRO BTP.")
 
 
