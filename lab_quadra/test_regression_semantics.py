@@ -327,5 +327,14 @@ class RegressionSemantics(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertEqual(semantic_group(label), group)
 
+    def test_corporate_officer_net_header(self):
+        net=extract_net_salary_block(
+            ["Net à payer (En Euros)", "___Sans convention collective___",
+             "2491.93", "A défaut de Convention Collective"],0)
+        self.assertEqual(net,249193)
+        self.assertTrue(infer_zero_pas(None,True,net,249193,"bulletin"))
+        self.assertIsNone(extract_net_salary_block(
+            ["NET A PAYER AVANT IMPOT SUR LE REVENU 2491.93"],0))
+
 if __name__=="__main__":
     unittest.main()
