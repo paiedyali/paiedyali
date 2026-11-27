@@ -160,8 +160,8 @@ def semantic_group(label,section=None):
         return "PREVOYANCE"
     if re.fullmatch(r"(?:MENSUALISATION|INCAPACITE|FONDS (?:DE )?PEREQUATION|FAPS|F A P S) (?:TR|TRANCHE) A",v):
         return "PREVOYANCE"
-    if re.fullmatch(r"PARITARISME (?:TR|TRANCHE) A",v):
-        return "AUTRES"
+    if re.search(r"\bPARITARISME\b",v):
+        return None
     if v in {"FONDS DE PEREQUATION","F A P S","FAPS"}:
         return "PREVOYANCE"
     if re.search(r"\bRENTE EDUCATION\b",v):
@@ -174,7 +174,7 @@ def semantic_group(label,section=None):
         return "AUTRES"
     if re.search(r"\bPARTICIP\b.*\bFORMATION CDD\b|\bCPF CDD\b",v):
         return "URSSAF"
-    if re.search(r"\bPREVOYANCE\b|\bPREV\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b|\bPARITARISME\b|\bFOND ACTION SOCIALE\b",v):
+    if re.search(r"\bPREVOYANCE\b|\bPREV\b|\bINCAP\b.*\bINVAL\b|\bIPRIAC\b|\bCFA\b|\bFOND ACTION SOCIALE\b",v):
         return "PREVOYANCE"
     if re.search(r"\bAPEC\b|\bRETRAITE COMPL\b|\bCEG\b|\bCET\b|\bAGIRC\b|\bARRCO\b|\bCOMPLEMENTAIRE TRANCHE\b",v):
         return "RETRAITE"
@@ -222,6 +222,8 @@ def parse(path):
             q["company"]=company_match.group(1).strip()
         ll=p.splitlines()
         normalized_page=normalized_label(p)
+        q["food_context"]=q.get("food_context",False) or "COMMERCE DE DETAIL ALIMENTAIRE NON SPECIALISE" in normalized_page
+        q["transport_context"]=q.get("transport_context",False) or "TRANSPORTS ROUTIERS" in normalized_page
         q["auto_context"]=q.get("auto_context",False) or "SERVICES DE L AUTOMOBILE" in normalized_page or "IRP AUTO APASCA" in normalized_page
         q["stage_franchise"]=q.get("stage_franchise",False) or ("EMPLOI STAGIAIRE" in normalized_page and "SEUIL DE FRANCHISE" in normalized_page and "GRATIFICATION STAGIAIRE NON AS" in normalized_page)
         # PAS fiscal : lire la colonne Montant de la section Impot sur le revenu,
@@ -378,6 +380,11 @@ def parse(path):
                 and q["pas"] is not None):
             q["net"]=q["net_before_tax"]-q["pas"]
             q["net_source"]="calcul net avant PAS - PAS"
+        for x in list(q["unknown"]):
+            if re.search(r"\bPARITARISME\b",normalized_label(x["label"])) and (q.get("food_context") != q.get("transport_context")):
+                q["unknown"].remove(x)
+                x["group"]="AUTRES" if q.get("food_context") else "PREVOYANCE"
+                q["lines"].append(x)
         # La prevention seule est ambigue hors du contexte automobile.
         if q.get("auto_context"):
             for x in list(q["unknown"]):
@@ -503,7 +510,7 @@ total_patronal=sum((p["pat"] or 0) for p in people.values())
 total_salarial_classes=sum(v[0] for v in company.values())
 total_patronal_classes=sum(v[1] for v in company.values())
 has_unknown=any(p["unknown"] for p in people.values())
-has_anomalies=any(p["delta"]!=0 for p in people.values())
+has_anomalies=any(p["delta"] is None or abs(p["delta"])>1 for p in people.values())
 collector_uncertain=any("REDUCTION_MIXTE" in p["groups"] for p in people.values())
 estimated_collector=any(p["estimated_split"] is not None for p in people.values())
 ambiguous_collector=any(p["collector_ambiguity"] for p in people.values())
@@ -691,7 +698,7 @@ else:
     if estimated_collector:
         st.caption("Ventilation indicative : la réduction Q802 est estimée par salarié, avec des écarts possibles de 0,01 € par rapport au détail interne Quadra.")
     st.success("Contrôle patronal : "+euro(total_patronal_classes)+" calculés / "+
-               euro(total_patronal)+" sur les bulletins. Écart : 0,00 €.")
+               euro(total_patronal)+" sur les bulletins. Écart : "+euro(total_patronal_classes-total_patronal)+".")
 
 st.subheader("Détail par salarié")
 for p in people.values():
@@ -856,6 +863,12 @@ if retirement_missing:
                ". Vérifier l'affiliation et le paramétrage AGIRC-ARRCO, sous réserve des situations particulières. "
                "Cette alerte ne bloque pas les exports.")
 
+# Alertes individuelles, sans conclusion sur la couverture effective.
+for title, families in [("Mutuelle",{"MUTUELLE"}),("Prévoyance",{"PREVOYANCE","PREV_COMP","PRO_BTP"})]:
+    missing=[p["mat"] for p in people.values() if (p["brut"] or 0)>0
+             and not any(x["group"] in families and (x["sal"] or x["pat"]) for x in p["lines"])]
+    if missing:
+        st.warning(title+" : aucune cotisation identifiée pour les matricules "+", ".join(missing)+". Vérifier les dispenses et contrats.")
 # Rappel juridique informatif, indépendant des calculs et du rapprochement.
 absence_mutuelle=not any(mutuelle_lignes)
 absence_prevoyance=not any(
