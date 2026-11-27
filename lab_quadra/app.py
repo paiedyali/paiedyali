@@ -14,7 +14,10 @@ if not pw or not hmac.compare_digest(pw,secret):
     if pw:st.error("Accès refusé")
     st.stop()
 MONEY=re.compile(r"-?\d+\.\d{2,4}")
-CODE=re.compile(r"^\s*((?:E[0-9]{3}|(?:EQ|EW|SW|E_)[A-Z0-9_]{2,3}))\s+(.+)$")
+# Codes de rubrique variables selon le dossier : E, EQ, EW, E_, SW.
+# EMUT (mutuelle) et les rubriques apprenti doivent être acceptés.
+# Le code ne détermine jamais l'organisme.
+CODE=re.compile(r"^\\s*((?:E[A-Z0-9_]{2,5}|SW[A-Z0-9_]{2,4}))\\s+(.+)$")
 def cents(s):return int((Decimal(s)*100).quantize(Decimal("1")))
 def euro(c):return f"{c/100:,.2f} €".replace(","," ").replace(".",",")
 def pct(part,base):
@@ -135,6 +138,18 @@ def semantic_group(label,section=None):
     # Les contributions conventionnelles BTP ont des descriptions
     # distinctes du seul numero de rubrique; maintenir leur regroupement
     # precedent jusqu'a reconciliation avec le tableau des charges.
+    # Les caisses de conges payes BTP et leurs contributions associees
+    # ne sont pas des cotisations de prevoyance ni des retraites.
+    # Le collecteur exact est conserve dans le libelle technique ;
+    # la famille de gestion est "Autres" tant qu'elle n'a pas sa ligne.
+    if re.search(r"\\b(CAISSE DE CONGES PAYES|CCP OPPBTP|BTP ACTION SOCIALE)\\b",v):
+        return "AUTRES"
+    # Assiettes exonerees et non exonerees des apprentis :
+    # reconnaitre l'objet, pas les codes locaux EWO0, EW5C, etc.
+    if re.search(r"\\bVIEILLESSE\\b.*\\b(PLAF|DEPLAF)\\b",v):
+        return "URSSAF"
+    if re.search(r"\\bRET COMPL\\b",v):
+        return "RETRAITE"
     if "BTP" in v and ("CONSTRUCTYS" in v or "APNAB" in v):
         return "URSSAF" if "TX LEG" in v else "PREVOYANCE"
     if "BTP" in v and "TAXE CCCA" in v:
