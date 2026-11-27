@@ -157,6 +157,8 @@ def semantic_group(label,section=None):
         return "PREVOYANCE"
     if re.search(r"\bRENTE EDUCATION\b",v):
         return "PREVOYANCE"
+    if re.search(r"\bCONTRIBUTION FARE\b|\bCOTISATION FARE\b",v):
+        return "AUTRES"
     if re.search(r"\bADESATT\b",v):
         return "AUTRES"
     if re.search(r"\bPARTICIP\b.*\bFORMATION CDD\b|\bCPF CDD\b",v):
