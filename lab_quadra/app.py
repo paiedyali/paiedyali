@@ -175,7 +175,7 @@ def parse(path):
         d=re.search(r"P[ée]riode\s*:\s*([^\n]+)",p)
         if not (m and s and d):errors.append("Identité incomplète page "+str(n));continue
         key=(s.group(1),d.group(1).strip(),m.group(1))
-        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None))
+        q=found.setdefault(key,dict(mat=m.group(1),nom=None,company=None,pages=[],lines=[],unknown=[],brut=None,pat=None,net=None,pas=None,cout=None,q_layout=False,net_before_tax=None,net_source=None,pas_row_seen=False))
         q["pages"].append(n)
         company_match=re.search(r"(?im)^\s*Soci[eé]t[eé]\s+([^\n]+)",p)
         if company_match and not q["company"]:
@@ -184,6 +184,8 @@ def parse(path):
         # PAS fiscal : lire la colonne Montant de la section Impot sur le revenu,
         # jamais la colonne Cumul annuel ni les lignes de cotisations sociales.
         for tax_line in ll:
+            if re.search(r"(?i)imp[oô]t sur le revenu pr[eé]lev[eé] [àa] la source",tax_line):
+                q["pas_row_seen"]=True
             pas_value=extract_pas(tax_line)
             if pas_value is not None:
                 if q["pas"] is not None and q["pas"]!=pas_value:
@@ -319,6 +321,17 @@ def parse(path):
             if category is None:q["unknown"].append(item)
             else:item["group"]=category;q["lines"].append(item)
     for q in found.values():
+        # Quadra peut laisser vides les colonnes mensuelles PAS lorsque
+        # l'impôt prélevé est nul, tout en montrant "0.00" en cumul annuel.
+        # On ne prend jamais ce cumul pour le PAS du mois. Une retenue
+        # mensuelle nulle est déduite uniquement si le bulletin imprime
+        # à la fois le net payé et le net avant impôt, identiques, et
+        # comporte réellement une rubrique d'impôt à la source.
+        if (q["pas"] is None and q["pas_row_seen"]
+                and q["net_source"]=="bulletin" and q["net"] is not None
+                and q["net_before_tax"] is not None
+                and q["net"]==q["net_before_tax"]):
+            q["pas"]=0
         # Cette deduction ne s'active jamais si un NET PAYE est lisible.
         if (q["net"] is None and q["net_before_tax"] is not None
                 and q["pas"] is not None):
