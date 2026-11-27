@@ -818,6 +818,21 @@ else:
 st.caption("URSSAF affichée inclut chômage et AGS. Le tableau des charges reste nécessaire pour valider les rattachements expérimentaux, notamment PRO BTP.")
 
 
+# Alerte de couverture retraite, sans inventer de cotisations.
+retirement_missing=[
+    p for p in people.values()
+    if (p["brut"] or 0)>0
+    and any(x["group"]=="URSSAF" and (x["sal"] or x["pat"]) for x in p["lines"])
+    and not any(x["group"]=="RETRAITE" and
+                "REDUCTION" not in normalized_label(x["label"])
+                for x in p["lines"])
+]
+if retirement_missing:
+    st.warning("Retraite complémentaire : aucune cotisation identifiée pour les matricules "+
+               ", ".join(p["mat"] for p in retirement_missing)+
+               ". Vérifier l'affiliation et le paramétrage AGIRC-ARRCO, sous réserve des situations particulières. "
+               "Cette alerte ne bloque pas les exports.")
+
 # Rappel juridique informatif, indépendant des calculs et du rapprochement.
 absence_mutuelle=not any(mutuelle_lignes)
 absence_prevoyance=not any(
