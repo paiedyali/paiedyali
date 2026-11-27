@@ -164,6 +164,8 @@ def semantic_group(label,section=None):
         return "PREVOYANCE"
     if re.search(r"\bCONTRIBUTION FARE\b|\bCOTISATION FARE\b",v):
         return "AUTRES"
+    if re.search(r"\bIRP AUTO (?:APASCA|CESA)(?:\b|$)",v) or v=="APASCA":
+        return "AUTRES"
     if re.search(r"\bADESATT\b",v):
         return "AUTRES"
     if re.search(r"\bPARTICIP\b.*\bFORMATION CDD\b|\bCPF CDD\b",v):
@@ -215,6 +217,9 @@ def parse(path):
         if company_match and not q["company"]:
             q["company"]=company_match.group(1).strip()
         ll=p.splitlines()
+        normalized_page=normalized_label(p)
+        q["auto_context"]=q.get("auto_context",False) or "SERVICES DE L AUTOMOBILE" in normalized_page or "IRP AUTO APASCA" in normalized_page
+        q["stage_franchise"]=q.get("stage_franchise",False) or ("EMPLOI STAGIAIRE" in normalized_page and "SEUIL DE FRANCHISE" in normalized_page and "GRATIFICATION STAGIAIRE NON AS" in normalized_page)
         # PAS fiscal : lire la colonne Montant de la section Impot sur le revenu,
         # jamais la colonne Cumul annuel ni les lignes de cotisations sociales.
         for tax_line in ll:
@@ -369,6 +374,20 @@ def parse(path):
                 and q["pas"] is not None):
             q["net"]=q["net_before_tax"]-q["pas"]
             q["net_source"]="calcul net avant PAS - PAS"
+        # La prevention seule est ambigue hors du contexte automobile.
+        if q.get("auto_context"):
+            for x in list(q["unknown"]):
+                if normalized_label(x["label"])=="PREVENTION":
+                    q["unknown"].remove(x)
+                    x["group"]="AUTRES"
+                    q["lines"].append(x)
+        # Stage avec gratification explicitement non assujettie et franchise.
+        if (q.get("stage_franchise") and not q["lines"] and not q["unknown"]
+                and q["brut"] in (None,0) and q["pat"] in (None,0)
+                and q["net"] is not None and q["net"]>0 and q["cout"]==q["net"]
+                and q["pas"]==0):
+            q["brut"]=0
+            q["pat"]=0
         # Un bulletin de solde nul peut ne contenir NI SALAIRE BRUT,
         # NI TOTAL DES RETENUES : ne jamais exiger ces deux lignes.
         # La confirmation vient du net à payer explicitement égal à 0,
