@@ -386,10 +386,7 @@ def parse(path):
                 if has_explicit_agirc_reduction:
                     x["group"]="URSSAF"
                 else:
-                    q["lines"].remove(x)
-                    q["unknown"].append({
-                        "code":x["code"],"label":x["label"],
-                        "sal":x["sal"],"pat":x["pat"],"page":x["page"]})
+                    x["group"]="REDUCTION_MIXTE"
         groups=defaultdict(lambda:[0,0])
         for x in q["lines"]:
             # Ne pas inférer le statut conventionnel d'un code E ou EQ.
@@ -453,8 +450,8 @@ finally:
     if path and path.exists():path.unlink()
 if errors or not people or len(set(x[0] for x in people))!=1 or len(set(x[1] for x in people))!=1:
     st.error("Dossier ou période incohérents, ou lecture incomplète.");st.write(errors);st.stop()
-CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES","A_QUALIFIER"]
-LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres","A_QUALIFIER":"Autres — à qualifier"}
+CATEGORIES=["URSSAF","RETRAITE","PREVOYANCE","MUTUELLE","AUTRES"]
+LABELS={"URSSAF":"URSSAF","RETRAITE":"Retraite","PREVOYANCE":"Prévoyance","MUTUELLE":"Mutuelle","AUTRES":"Autres"}
 def category_totals(person):
     totals=defaultdict(lambda:[0,0])
     for group,amounts in person["groups"].items():
@@ -462,7 +459,6 @@ def category_totals(person):
         elif group=="RETRAITE":display="RETRAITE"
         elif group in {"PREVOYANCE","PREV_COMP","PRO_BTP"}:display="PREVOYANCE"
         elif group=="MUTUELLE":display="MUTUELLE"
-        elif group=="A_QUALIFIER":display="A_QUALIFIER"
         else:display="AUTRES"
         totals[display][0]+=amounts[0]
         totals[display][1]+=amounts[1]
@@ -483,7 +479,7 @@ has_anomalies=any(p["delta"]!=0 for p in people.values())
 collector_uncertain=any("REDUCTION_MIXTE" in p["groups"] for p in people.values())
 estimated_collector=any(p["estimated_split"] is not None for p in people.values())
 ambiguous_collector=any(p["collector_ambiguity"] for p in people.values())
-missing_contribution_breakdown=any((p["brut"] or 0)>0 and not p["lines"] or p["pat"] is None for p in people.values())
+missing_contribution_breakdown=any((p["brut"] or 0)>0 and not (p["lines"] or p["unknown"]) or p["pat"] is None for p in people.values())
 contributions_incomplete=has_anomalies or missing_contribution_breakdown
 diagnostics=[]
 for person in people.values():
@@ -500,7 +496,7 @@ for person in people.values():
                         "Lignes inconnues":len(person["unknown"]),
                         "Écart patronal":euro(person["delta"]) if person["delta"] is not None else "Indéterminé",
                         "Statut":" ; ".join(reasons) if reasons else "Rapproché"})
-repartition_incomplete=contributions_incomplete or collector_uncertain or estimated_collector
+repartition_incomplete=contributions_incomplete
 
 st.subheader("Synthèse de la société")
 st.caption("Dossier SIRET : "+next(iter(people))[0]+" · Période : "+next(iter(people))[1])
@@ -621,7 +617,7 @@ if health_rows:
         st.caption("Contrôle fondé sur les libellés, les taux et les montants lus sur les bulletins, sans numéro de rubrique imposé.")
 
 if has_unknown:
-    st.warning("Ventilation provisoire : les rubriques à qualifier sont incluses dans les totaux extraits. Ne pas utiliser comme état de règlement. Vérifier leur nature, y compris les montants salariaux.")
+    st.warning("Les rubriques à qualifier sont incluses dans Autres. Ventilation indicative, à vérifier avant règlement.")
 st.markdown("**Cotisations de toute la société par organisme**")
 if contributions_incomplete:
     st.warning("Ventilation non rapprochée : montants extraits ci-dessous, non validés.")
@@ -693,7 +689,7 @@ for p in people.values():
         if p["net"] is None:
             st.caption("Net à payer absent de la lecture du PDF (pages : "+", ".join(map(str,p["pages"]))+").")
         b.metric("Salaire brut",euro(p["brut"]) if p["brut"] is not None else "Non déterminé")
-        p_incomplete=p["delta"]!=0 or ((p["brut"] or 0)>0 and not p["lines"])
+        p_incomplete=p["delta"]!=0 or ((p["brut"] or 0)>0 and not (p["lines"] or p["unknown"]))
         p_collector_uncertain="REDUCTION_MIXTE" in p["groups"]
         c.metric("Cotisations sociales totales",euro(sal+pat) if not p_incomplete else "À vérifier")
         if p["pas"] is not None:
@@ -750,10 +746,10 @@ for p in people.values():
         if p["unknown"]:
             st.warning(str(len(p["unknown"]))+" rubrique(s) à qualifier ; montants inclus provisoirement.")
             with st.expander("Anomalies techniques"):
-                st.dataframe(p["unknown"],hide_index=True,use_container_width=True)
+                st.dataframe([{**x,"sal":euro(x["sal"]),"pat":euro(x["pat"])} for x in p["unknown"]],hide_index=True,use_container_width=True)
 
 st.subheader("Rapport client PDF")
-pdf_allowed=(not has_unknown and not contributions_incomplete and not collector_uncertain
+pdf_allowed=(not contributions_incomplete
              and all_cost_known and all_net_known and all_pas_known)
 if pdf_allowed:
     from report_pdf import make_report
@@ -770,7 +766,8 @@ if pdf_allowed:
         })
     try:
         pdf_bytes=make_report(next(iter(people))[0],next(iter(people))[1],
-                              pdf_employees,estimated=estimated_collector,
+                              pdf_employees,estimated=estimated_collector or collector_uncertain,
+                              provisional=has_unknown or collector_uncertain or ambiguous_collector,
                               company_name=next(iter(people.values())).get("company"))
         st.download_button("Télécharger le rapport PDF",data=pdf_bytes,
                            file_name="paiedyali_rapport_entreprise.pdf",
@@ -779,7 +776,7 @@ if pdf_allowed:
     except Exception:
         st.error("Impossible de préparer le rapport PDF. Vérifier le modèle de rapport.")
 else:
-    st.warning("Rapport client PDF indisponible : montants ou affectations à vérifier. Le CSV de gestion reste disponible si les montants sont rapprochés.")
+    st.warning("Rapport client PDF indisponible : montants non rapprochés ou données essentielles manquantes.")
 
 if repartition_incomplete:
     st.caption("L'export des montants par organisme est désactivé tant que les cotisations ne sont pas rapprochées.")
@@ -791,7 +788,7 @@ else:
     csv_writer=csv.writer(csv_buffer,delimiter=";")
     csv_writer.writerow(["Période","Salarié","Matricule","Brut","Net à payer","DGFiP PAS",
                          "Coût employeur","Cotisations salariales","Cotisations patronales",
-                         "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres","Autres à qualifier",
+                         "Cotisations totales","URSSAF","Retraite","Prévoyance","Mutuelle","Autres",
                          "Statut du contrôle"])
     for person in people.values():
         categorized=category_totals(person)
@@ -805,7 +802,7 @@ else:
             euro(person["cout"]) if person["cout"] is not None else "Non déterminé",
             euro(sal_total),euro(pat_total),euro(sal_total+pat_total),
             *[euro(sum(categorized[category])) for category in CATEGORIES],
-            "A vérifier" if person["unknown"] or person["delta"]!=0 else "Patronal rapproché"
+            "Ventilation provisoire" if person["unknown"] or "REDUCTION_MIXTE" in person["groups"] or person["estimated_split"] is not None or person["collector_ambiguity"] else "Patronal rapproché"
         ])
     st.download_button("Télécharger le récapitulatif CSV des salariés",
                        data="\ufeff"+csv_buffer.getvalue(),
