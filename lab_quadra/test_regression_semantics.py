@@ -12,7 +12,7 @@ from pathlib import Path
 
 APP=Path(__file__).with_name("app.py")
 TREE=ast.parse(APP.read_text(encoding="utf-8"),filename=str(APP))
-FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block","health_supplement_is_mutuelle","infer_zero_pas","extract_employee_id"}
+FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block","health_supplement_is_mutuelle","infer_zero_pas","extract_employee_id","annual_ta"}
 NODES=[node for node in TREE.body if isinstance(node,ast.FunctionDef)
        and node.name in FUNCTIONS]
 SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
@@ -341,6 +341,15 @@ class RegressionSemantics(unittest.TestCase):
         self.assertEqual(semantic_group("IRP AUTO - CESA TA"),"AUTRES")
         self.assertIsNone(semantic_group("PREVENTION"))
         self.assertEqual(960+600+225,1785)
+
+    def test_annual_tax_and_food_contributions(self):
+        for label in ["MENSUALISATION TR A","INCAPACITE TR A","FONDS PEREQUATION TR A","FAPS TR A"]:
+            self.assertEqual(semantic_group(label),"PREVOYANCE")
+        self.assertIsNone(semantic_group("PARITARISME TR A"))
+        self.assertEqual(SCOPE["annual_ta"]({"lines":[
+            {"group":"URSSAF","label":"SOLDE TAXE APPRENTISSAGE","pat":626},
+            {"group":"URSSAF","label":"TAXE APPRENTISSAGE","pat":4108}
+        ]}),626)
 
 if __name__=="__main__":
     unittest.main()
