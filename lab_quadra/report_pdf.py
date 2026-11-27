@@ -28,7 +28,7 @@ def percent(amount, base):
     return (f"{amount * 100 / base:.2f}".replace(".", ",") + " %") if base > 0 else "-"
 
 
-def make_report(siret, period, employees, estimated=False, company_name=None):
+def make_report(siret, period, employees, estimated=False, company_name=None, provisional=False):
     """Return the PDF bytes; employees include cost, gross, net, groups and contribution totals."""
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, rightMargin=17*mm,
@@ -104,6 +104,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None):
             company_groups[k][0]+=a
             company_groups[k][1]+=b
 
+    if provisional:
+        story.append(Paragraph("Ventilation indicative : Autres peut inclure des cotisations à qualifier ou une réduction générale non répartie. Ne pas utiliser comme état de règlement.",styles["PDSmall"]))
     story.append(Paragraph("Répartition des cotisations par organisme",styles["PDSection"]))
     rows=[[P("Organisme","PDCellHead")]+[P(x,"PDCellHeadRight") for x in ["Salariales","Patronales","Total","Part"]]]
     for k,label in zip(KEYS,LABELS):
