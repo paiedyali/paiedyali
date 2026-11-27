@@ -155,6 +155,9 @@ def semantic_group(label,section=None):
         return "URSSAF" if "TX LEG" in v else "PREVOYANCE"
     if "BTP" in v and "TAXE CCCA" in v:
         return "PREVOYANCE"
+    # Garanties de remplacement du revenu et indemnites assurees.
+    if re.search(r"^(?:INCAPACITE (?:DE|DU) TRAVAIL|MAINTIEN DE SALAIRE|INDEM(?:NITE)? DEPART RETRAITE)$",v):
+        return "PREVOYANCE"
     if re.search(r"\bRENTE EDUCATION\b",v):
         return "PREVOYANCE"
     if re.search(r"\bCONTRIBUTION FARE\b|\bCOTISATION FARE\b",v):
