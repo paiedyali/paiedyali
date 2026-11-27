@@ -67,7 +67,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None, pr
     pat = sum(e["pat"] for e in employees)
     social = sal + pat
     pas = sum(e["pas"] for e in employees)
-    overall = social + pas
+    annual_ta = sum(e.get("annual_ta",0) for e in employees)
+    overall = social + pas - annual_ta
 
     def table(rows, widths, header=True, total=False):
         t = Table(rows, colWidths=widths, repeatRows=1 if header else 0, hAlign="LEFT")
@@ -94,7 +95,7 @@ def make_report(siret, period, employees, estimated=False, company_name=None, pr
         [P("Cotisations sociales (salariales + patronales, hors PAS)"),
          P(fmt(social),"PDCellRight")],
         [P("DGFiP - Prélèvement à la source"),P(fmt(pas),"PDCellRight")],
-        [P("Total à reverser (social + PAS)"),P(fmt(overall),"PDCellRight")],
+        [P("Total mensuel (social + PAS, hors solde TA)"),P(fmt(overall),"PDCellRight")],
     ], [116*mm,52*mm]))
 
     company_groups={k:[0,0] for k in KEYS}
@@ -110,13 +111,16 @@ def make_report(siret, period, employees, estimated=False, company_name=None, pr
     rows=[[P("Organisme","PDCellHead")]+[P(x,"PDCellHeadRight") for x in ["Salariales","Patronales","Total","Part"]]]
     for k,label in zip(KEYS,LABELS):
         a,b=company_groups[k]
+        if k=="URSSAF": b-=annual_ta
         rows.append([P(label),P(fmt(a),"PDCellRight"),P(fmt(b),"PDCellRight"),
                      P(fmt(a+b),"PDCellRight"),P(percent(a+b,social),"PDCellRight")])
-    rows.append([P("TOTAL"),P(fmt(sal),"PDCellRight"),P(fmt(pat),"PDCellRight"),
+    if annual_ta:
+        rows.append([P("Solde TA annuel"),P("-","PDCellRight"),P(fmt(annual_ta),"PDCellRight"),P(fmt(annual_ta),"PDCellRight"),P(percent(annual_ta,social),"PDCellRight")])
+    rows.append([P("TOTAL CHARGES"),P(fmt(sal),"PDCellRight"),P(fmt(pat),"PDCellRight"),
                  P(fmt(social),"PDCellRight"),P(percent(social,social),"PDCellRight")])
     rows.append([P("DGFiP - PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                  P(fmt(pas),"PDCellRight"),P("-","PDCellRight")])
-    rows.append([P("TOTAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+    rows.append([P("TOTAL MENSUEL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                  P(fmt(overall),"PDCellRight"),P("-","PDCellRight")])
     story.append(table(rows,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
 
@@ -131,7 +135,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None, pr
     story.append(Paragraph("Détail par salarié",styles["PDSection"]))
     for e in sorted(employees,key=lambda x:x["cost"],reverse=True):
         subtotal=e["sal"]+e["pat"]
-        with_pas=subtotal+e["pas"]
+        employee_ta=e.get("annual_ta",0)
+        with_pas=subtotal+e["pas"]-employee_ta
         section=[Paragraph(escape(e["name"]+" - Matricule "+str(e["mat"])),styles["PDSection"])]
         section.append(table([
             [P("Coût employeur","PDCellHeadRight"),P("Part du coût","PDCellHeadRight"),
@@ -145,14 +150,17 @@ def make_report(siret, period, employees, estimated=False, company_name=None, pr
         details=[[P("Organisme","PDCellHead")]+[P(x,"PDCellHeadRight") for x in ["Salariales","Patronales","Total","Part"]]]
         for k,label in zip(KEYS,LABELS):
             a,b=e["groups"].get(k,(0,0))
+            if k=="URSSAF": b-=employee_ta
             details.append([P(label),P(fmt(a),"PDCellRight"),P(fmt(b),"PDCellRight"),
                             P(fmt(a+b),"PDCellRight"),P(percent(a+b,subtotal),"PDCellRight")])
-        details.append([P("TOTAL"),P(fmt(e["sal"]),"PDCellRight"),
+        if employee_ta:
+            details.append([P("Solde TA annuel"),P("-","PDCellRight"),P(fmt(employee_ta),"PDCellRight"),P(fmt(employee_ta),"PDCellRight"),P(percent(employee_ta,subtotal),"PDCellRight")])
+        details.append([P("TOTAL CHARGES"),P(fmt(e["sal"]),"PDCellRight"),
                         P(fmt(e["pat"]),"PDCellRight"),P(fmt(subtotal),"PDCellRight"),
                         P(percent(subtotal,subtotal),"PDCellRight")])
         details.append([P("DGFiP - PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                         P(fmt(e["pas"]),"PDCellRight"),P("-","PDCellRight")])
-        details.append([P("TOTAL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
+        details.append([P("TOTAL MENSUEL + PAS"),P("-","PDCellRight"),P("-","PDCellRight"),
                         P(fmt(with_pas),"PDCellRight"),P("-","PDCellRight")])
         section.append(table(details,[33*mm,33*mm,33*mm,43*mm,26*mm],total=True))
         section.append(Spacer(1,3*mm))
@@ -163,6 +171,8 @@ def make_report(siret, period, employees, estimated=False, company_name=None, pr
               "Les parts des organismes sont calculées sur les cotisations sociales, hors prélèvement à la source. "
               "DGFiP - PAS est un prélèvement fiscal distinct, retenu sur le salaire net.",
               styles["PDSmall"])]
+    if annual_ta:
+        story.append(Paragraph("Solde TA comptabilisé ce mois : "+fmt(annual_ta)+". Paiement annuel en mai N+1 ; compris dans les charges, hors total mensuel.",styles["PDSmall"]))
     if estimated:
         story.append(Paragraph("Ventilation URSSAF / retraite estimée à partir des bulletins. "
             "Document de gestion indicatif, ne constitue pas un état officiel de règlement.",
