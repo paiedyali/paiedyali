@@ -12,7 +12,7 @@ from pathlib import Path
 
 APP=Path(__file__).with_name("app.py")
 TREE=ast.parse(APP.read_text(encoding="utf-8"),filename=str(APP))
-FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block","health_supplement_is_mutuelle"}
+FUNCTIONS={"normalized_label","non_contribution","semantic_group","cents","extract_pas","extract_net_before_tax","extract_net_paye","extract_net_salary_block","health_supplement_is_mutuelle","infer_zero_pas"}
 NODES=[node for node in TREE.body if isinstance(node,ast.FunctionDef)
        and node.name in FUNCTIONS]
 SCOPE={"re":re,"unicodedata":unicodedata,"Decimal":Decimal,
@@ -21,6 +21,7 @@ exec(compile(ast.Module(body=NODES,type_ignores=[]),str(APP),"exec"),SCOPE)
 semantic_group=SCOPE["semantic_group"]
 health_supplement_is_mutuelle=SCOPE["health_supplement_is_mutuelle"]
 extract_pas=SCOPE["extract_pas"]
+infer_zero_pas=SCOPE["infer_zero_pas"]
 extract_net_before_tax=SCOPE["extract_net_before_tax"]
 extract_net_paye=SCOPE["extract_net_paye"]
 extract_net_salary_block=SCOPE["extract_net_salary_block"]
@@ -106,6 +107,20 @@ class RegressionSemantics(unittest.TestCase):
         # exactement son ecart patronal initial de -0,95 EUR.
         self.assertEqual(12+83,95)
         self.assertEqual(181+48+2410,2639)
+
+    def test_quadrapayroll_two_pages_blank_zero_pas(self):
+        # Capture du matricule 9 : la colonne Montant fiscal est vide,
+        # le cumul annuel indique 0,00. Le net imprimé est identique
+        # au net avant impôt de 3 492,69 EUR sur la seconde page.
+        self.assertTrue(infer_zero_pas(None,True,349269,349269,"bulletin"))
+        self.assertFalse(infer_zero_pas(None,False,349269,349269,"bulletin"))
+        self.assertFalse(infer_zero_pas(None,True,349269,349270,"bulletin"))
+        self.assertFalse(infer_zero_pas(None,True,None,349269,None))
+        self.assertFalse(infer_zero_pas(None,True,349269,None,"bulletin"))
+        self.assertFalse(infer_zero_pas(821,True,349269,349269,"bulletin"))
+        # Zero n'est jamais supposé à partir du seul cumul annuel.
+        self.assertIsNone(extract_pas(
+            "Impôt sur le revenu prélevé à la source                            0.00"))
 
     def test_pas_dgfip_extraction_for_references(self):
         # 4 montants: base, taux, retenue, cumul. Ne pas prendre le cumul.
