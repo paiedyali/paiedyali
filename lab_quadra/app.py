@@ -158,6 +158,10 @@ def semantic_group(label,section=None):
     # Garanties de remplacement du revenu et indemnites assurees.
     if re.search(r"^(?:INCAPACITE (?:DE|DU) TRAVAIL|MAINTIEN DE SALAIRE|INDEM(?:NITE)? DEPART RETRAITE(?: (?:TR|TRANCHE) A)?)$",v):
         return "PREVOYANCE"
+    if re.fullmatch(r"(?:MENSUALISATION|INCAPACITE|FONDS (?:DE )?PEREQUATION|FAPS|F A P S) (?:TR|TRANCHE) A",v):
+        return "PREVOYANCE"
+    if re.fullmatch(r"PARITARISME (?:TR|TRANCHE) A",v):
+        return "AUTRES"
     if v in {"FONDS DE PEREQUATION","F A P S","FAPS"}:
         return "PREVOYANCE"
     if re.search(r"\bRENTE EDUCATION\b",v):
