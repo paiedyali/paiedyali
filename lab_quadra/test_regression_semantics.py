@@ -135,6 +135,11 @@ class RegressionSemantics(unittest.TestCase):
         self.assertEqual(extract_employee_id("Matricule : AB_09-01  NoSécu.:"),"AB_09-01")
         self.assertIsNone(extract_employee_id("NoSécu. : 1234567890123"))
         self.assertIsNone(extract_employee_id("Matricule : "))
+        # Le dossier 2023 ne doit jamais recevoir les taux RGDU 2026.
+        source=APP.read_text(encoding="utf-8")
+        self.assertIn('re.search(r"\\b2026\\b",q["period"])',source)
+        self.assertIn('period=d.group(1).strip()',source)
+
 
     def test_pas_dgfip_extraction_for_references(self):
         # 4 montants: base, taux, retenue, cumul. Ne pas prendre le cumul.
