@@ -336,5 +336,11 @@ class RegressionSemantics(unittest.TestCase):
         self.assertIsNone(extract_net_salary_block(
             ["NET A PAYER AVANT IMPOT SUR LE REVENU 2491.93"],0))
 
+    def test_automotive_specific_contributions(self):
+        self.assertEqual(semantic_group("IRP AUTO - APASCA"),"AUTRES")
+        self.assertEqual(semantic_group("IRP AUTO - CESA TA"),"AUTRES")
+        self.assertIsNone(semantic_group("PREVENTION"))
+        self.assertEqual(960+600+225,1785)
+
 if __name__=="__main__":
     unittest.main()
