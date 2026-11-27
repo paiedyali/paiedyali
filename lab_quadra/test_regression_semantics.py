@@ -277,6 +277,35 @@ class RegressionSemantics(unittest.TestCase):
         self.assertEqual(80352-(55536+24816),0)
         self.assertEqual(4058551-4008919,49632)
 
+    def test_loussiya_october_2026_four_employees(self):
+        # Le tableau des charges est une reference de test, pas une
+        # dépendance de l'application. Les codes locaux E*/SW* varient.
+        cases=[
+            ("FRAIS DE SANTE CADRE","MUTUELLE",25019),
+            ("BTP - CAISSE DE CONGES PAYES","AUTRES",36968),
+            ("BTP - CCP OPPBTP","AUTRES",232),
+            ("BTP - ACTION SOCIALE","AUTRES",747),
+            ("VIEILLESSE PLAF B.EXO APP","URSSAF",7986),
+            ("VIEILLESSE PLAF B.N.EXO APP","URSSAF",1048),
+            ("VIEILLESSE DEPLAF B.EXO APP","URSSAF",1971),
+            ("VIEILLESSE DEPLAF B.N.EXO APP","URSSAF",259),
+            ("RET COMPL AA TU1 B.EXO APP","RETRAITE",4408),
+            ("RET.COMPL. AA TU1 B.N.EXO APP","RETRAITE",579),
+        ]
+        for label,group,amount in cases:
+            with self.subTest(label=label):
+                self.assertEqual(semantic_group(label),group)
+        self.assertEqual(sum(x[2] for x in cases[4:]),16251)
+        self.assertEqual(36968+232+747,37947)
+        self.assertEqual(39359+247+795,40401)
+        # Le total des quatre ecarts initiaux prouve l'origine des anomalies.
+        self.assertEqual(25019+37947+16251+40401,119618)
+        # Totaux de reference issus du TB, a controler avec l'import reel.
+        self.assertEqual(198588+33605+20979+78348+25019,356539)
+        source=APP.read_text(encoding="utf-8")
+        self.assertIn('E[A-Z0-9_]{2,5}',source)  # accepte EMUT
+        self.assertIn('(?:E[A-Z0-9_]{2,5}|SW[A-Z0-9_]{2,4})',source)
+
     def test_code_is_never_used_for_collector(self):
         source=APP.read_text(encoding="utf-8")
         self.assertNotIn("MAP.get(code)",source)
