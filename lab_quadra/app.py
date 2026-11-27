@@ -94,6 +94,7 @@ def non_contribution(label):
         # Retenues sur salaire apres cotisations : pas des charges sociales.
         r"\bSAISIE\b.*\b(ARRET|SUR SALAIRE|REMUNERATION)\b",
         r"\bACOMPTE\b",
+        r"^PASS NAVIGO(?:$| )",
     ))
 
 def health_supplement_is_mutuelle(label,raw_line,sal_amount,pat_amount):
@@ -220,7 +221,7 @@ def parse(path):
                     q["pas"]=pas_value
         if not q["nom"]:
             for header_line in ll[:38]:
-                person_name=re.search(r"(?:^|\s)(?:MME|Mme|Mlle|M\.)\s+([A-ZÀ-ÖØ-Þ][A-ZÀ-ÖØ-Þ\x27 -]{2,})",header_line)
+                person_name=re.search(r"(?:^|\s)(?:MME\.?|MLLE\.?|MR\.?|M\.?)[ \t]+([A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’\-]*(?:[ \t][A-Za-zÀ-ÖØ-öø-ÿ'’\-]+)*)(?=\s{2,}|\s*$)",header_line,re.I)
                 if person_name:
                     q["nom"]=" ".join(person_name.group(1).split())
                     break
